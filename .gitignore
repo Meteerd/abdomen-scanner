@@ -1,0 +1,120 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual Environments
+venv/
+env/
+ENV/
+.venv/
+
+# Conda
+.conda/
+anaconda3/
+miniconda3/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+*.ipynb
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Data Files (CRITICAL - Don't upload patient data!)
+data_raw/dicom_files/
+data_processed/nifti_images/
+data_processed/nifti_labels_boxy/
+data_processed/nifti_labels_medsam/
+data_processed/medsam_2d_masks/
+data_processed/yolo_dataset/
+*.dcm
+*.nii
+*.nii.gz
+
+# Keep CSV annotations (small files, needed for development)
+# Uncomment below if CSVs are too large or contain sensitive info
+# data_raw/annotations/*.csv
+
+# Model Weights (Too large for Git)
+models/*.pth
+models/*.pt
+models/*.ckpt
+models/checkpoints/
+models/medsam/
+best_model*.pth
+final_model*.pth
+
+# Logs
+logs/
+*.log
+*.out
+*.err
+slurm-*.out
+tensorboard/
+
+# System Files
+.DS_Store
+Thumbs.db
+*.bak
+
+# Temporary Files
+*.tmp
+*.temp
+scratch/
+temp/
+
+# Secrets & Credentials
+.env
+*.pem
+*.key
+config/secrets.yaml
+credentials/
+
+# Large Files (Git LFS candidates)
+*.zip
+*.tar.gz
+*.h5
+*.hdf5
+
+# WandB (experiment tracking)
+wandb/
+
+# Cache
+.cache/
+.pytest_cache/
+
+# Keep directory structure but ignore contents
+!data_raw/.gitkeep
+!data_processed/nifti_images/.gitkeep
+!data_processed/nifti_labels_boxy/.gitkeep
+!data_processed/nifti_labels_medsam/.gitkeep
+!models/.gitkeep
+!logs/.gitkeep
+
+# OS
+.DS_Store
+Thumbs.db
+.DS_Store
+Thumbs.db

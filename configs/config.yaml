@@ -1,0 +1,47 @@
+# Comment-only placeholder for training/config knobs.
+# paths:
+#   nifti_images: data_processed/nifti_images
+#   labels_boxy: data_processed/nifti_labels_boxy
+#   labels_medsam: data_processed/nifti_labels_medsam
+#   train_split: splits/train_cases.txt
+#   val_split: splits/val_cases.txt
+#   test_split: splits/test_cases.txt
+#   models_dir: models
+#
+# preproc:
+#   target_spacing: [1.5, 1.5, 2.0]
+#   intensity_clip: [0.5, 99.5]
+#   norm_method: zscore
+#
+# aug:
+#   patch_size: [128, 128, 128]
+#   pos_neg_ratio: 0.5
+#   rand_flip: true
+#   rand_rotate: true
+#
+# model:
+#   type: monai_unet
+#   in_channels: 1
+#   out_channels: 4  # set to number of classes
+#   channels: [32,64,128,256,512]
+#   strides: [2,2,2,2]
+#   dropout: 0.0
+#
+# loss:
+#   dice_ce:
+#     dice_weight: 1.0
+#     ce_weight: 1.0
+#
+# optimizer:
+#   type: adamw
+#   lr: 0.0002
+#   weight_decay: 0.01
+#
+# train:
+#   epochs: 300
+#   batch_size: 2
+#   num_workers: 8
+#   mixed_precision: true
+#   amp_dtype: float16
+#   val_every: 1
+#   distributed: true
