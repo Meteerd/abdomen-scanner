@@ -26,6 +26,7 @@ env/
 ENV/
 .venv/
 
+data/
 # Conda
 .conda/
 anaconda3/

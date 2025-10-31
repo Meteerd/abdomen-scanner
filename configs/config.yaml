@@ -1,47 +1,187 @@
-# Comment-only placeholder for training/config knobs.
-# paths:
-#   nifti_images: data_processed/nifti_images
-#   labels_boxy: data_processed/nifti_labels_boxy
-#   labels_medsam: data_processed/nifti_labels_medsam
-#   train_split: splits/train_cases.txt
-#   val_split: splits/val_cases.txt
-#   test_split: splits/test_cases.txt
-#   models_dir: models
-#
-# preproc:
-#   target_spacing: [1.5, 1.5, 2.0]
-#   intensity_clip: [0.5, 99.5]
-#   norm_method: zscore
-#
-# aug:
-#   patch_size: [128, 128, 128]
-#   pos_neg_ratio: 0.5
-#   rand_flip: true
-#   rand_rotate: true
-#
-# model:
-#   type: monai_unet
-#   in_channels: 1
-#   out_channels: 4  # set to number of classes
-#   channels: [32,64,128,256,512]
-#   strides: [2,2,2,2]
-#   dropout: 0.0
-#
-# loss:
-#   dice_ce:
-#     dice_weight: 1.0
-#     ce_weight: 1.0
-#
-# optimizer:
-#   type: adamw
-#   lr: 0.0002
-#   weight_decay: 0.01
-#
-# train:
-#   epochs: 300
-#   batch_size: 2
-#   num_workers: 8
-#   mixed_precision: true
-#   amp_dtype: float16
-#   val_every: 1
-#   distributed: true
+# Abdominal Segmentation Training Configuration
+# Optimized for mesh-hpc cluster: 2x RTX 6000 (96GB VRAM each), 128 CPUs, 128GB RAM
+
+# ========================================
+# Data Paths
+# ========================================
+paths:
+  # Raw data (on cluster after transfer)
+  dicom_files: data_raw/dicom_files
+  annotations_train: data_raw/annotations/TRAININGDATA.csv
+  annotations_comp: data_raw/annotations/COMPETITIONDATA.csv
+  
+  # Processed data (Phase 1 outputs)
+  nifti_images: data_processed/nifti_images
+  labels_boxy: data_processed/nifti_labels_boxy
+  
+  # MedSAM outputs (Phase 2)
+  medsam_2d_masks: data_processed/medsam_2d_masks
+  labels_medsam: data_processed/nifti_labels_medsam
+  
+  # Dataset splits
+  train_split: splits/train_cases.txt
+  val_split: splits/val_cases.txt
+  test_split: splits/test_cases.txt
+  
+  # Models directory
+  models_dir: models
+  
+  # MedSAM checkpoint
+  medsam_ckpt: models/medsam_vit_b.pth
+
+# ========================================
+# Phase 1: Data Processing
+# ========================================
+phase1:
+  dicom_to_nifti:
+    dicom_root: data_raw/dicom_files
+    out_dir: data_processed/nifti_images
+  
+  make_boxy_labels:
+    master_csv: data_raw/annotations/TRAININGDATA.csv
+    nifti_dir: data_processed/nifti_images
+    out_dir: data_processed/nifti_labels_boxy
+  
+  split_dataset:
+    nifti_dir: data_processed/nifti_images
+    train_ratio: 0.8
+    val_ratio: 0.1
+    test_ratio: 0.1
+    seed: 42
+
+# ========================================
+# Phase 2: MedSAM Inference
+# ========================================
+phase2:
+  medsam_infer:
+    master_csv: data_raw/annotations/TRAININGDATA.csv
+    dicom_root: data_raw/dicom_files
+    out_root: data_processed/medsam_2d_masks
+    medsam_ckpt: models/medsam_vit_b.pth
+    num_gpus: 2  # Use both GPUs in parallel
+  
+  aggregate_masks:
+    masks2d_root: data_processed/medsam_2d_masks
+    nifti_dir: data_processed/nifti_images
+    out_dir: data_processed/nifti_labels_medsam
+
+# ========================================
+# Phase 3: Model Architecture
+# ========================================
+model:
+  type: monai_unet
+  in_channels: 1                    # CT is single-channel
+  out_channels: 4                   # Background + 3 pathologies (adjust based on your classes)
+  channels: [32, 64, 128, 256, 512] # Channel progression
+  strides: [2, 2, 2, 2]             # Downsampling factors
+  dropout: 0.0                      # No dropout initially
+  num_res_units: 2                  # Residual units per block
+
+# ========================================
+# Preprocessing
+# ========================================
+preproc:
+  # Normalize voxel spacing across all volumes
+  target_spacing: [1.5, 1.5, 2.0]   # [x, y, z] in mm (standard for CT)
+  
+  # CT Hounsfield Unit (HU) windowing
+  intensity_clip: [0.5, 99.5]       # Percentile clipping
+  hu_window_min: -175               # Soft tissue window
+  hu_window_max: 250
+  
+  # Normalization method
+  norm_method: zscore               # 'zscore' or 'minmax'
+
+# ========================================
+# Data Augmentation
+# ========================================
+aug:
+  # LARGE patch size - leverage 96GB VRAM!
+  # Standard is [96,96,96] but we can go much bigger
+  patch_size: [192, 192, 160]       # [H, W, D] - aggressive for better context
+  
+  # Sampling strategy for class imbalance
+  pos_neg_ratio: 1.0                # 1:1 ratio of foreground:background patches
+  num_samples: 2                    # Patches per image per epoch
+  
+  # Augmentation toggles
+  rand_flip: true                   # Random flips (x, y, z)
+  rand_rotate: true                 # Random 90° rotations
+  rand_scale_intensity: true        # Intensity scaling
+  rand_shift_intensity: true        # Intensity shifting
+  
+  # Augmentation probabilities
+  flip_prob: 0.5
+  rotate_prob: 0.5
+  scale_prob: 0.5
+  shift_prob: 0.5
+
+# ========================================
+# Loss Function
+# ========================================
+loss:
+  dice_ce:
+    dice_weight: 1.0
+    ce_weight: 1.0
+    # Class weights (adjust based on class frequency)
+    # [background, aneurysm, kidney_stone, appendicitis]
+    class_weights: [0.5, 2.0, 2.0, 2.0]  # Weight rare classes more
+
+# ========================================
+# Optimizer
+# ========================================
+optimizer:
+  type: adamw
+  lr: 0.0002                        # Learning rate (2e-4)
+  weight_decay: 0.00001             # L2 regularization (1e-5)
+
+# ========================================
+# Training
+# ========================================
+train:
+  epochs: 500                       # Maximum epochs
+  batch_size: 2                     # Per GPU (effective batch size = 2 * 2 GPUs = 4)
+  num_workers: 8                    # Data loading workers per GPU
+  
+  # Mixed precision training (faster, lower memory)
+  mixed_precision: true
+  amp_dtype: float16
+  
+  # Validation
+  val_every: 1                      # Validate every N epochs
+  
+  # Distributed training
+  distributed: true
+  strategy: ddp                     # DistributedDataParallel
+  num_gpus: 2                       # Use both RTX 6000 GPUs
+  
+  # Checkpointing
+  save_top_k: 3                     # Keep top 3 models
+  monitor_metric: val_dice          # Metric to monitor
+  monitor_mode: max                 # Maximize Dice score
+
+# ========================================
+# Inference (for validation/testing)
+# ========================================
+inference:
+  # Sliding window inference (for large volumes)
+  roi_size: [192, 192, 160]         # Same as patch_size
+  sw_batch_size: 2                  # Sliding window batch size
+  overlap: 0.5                      # Overlap between patches (50%)
+
+# ========================================
+# Logging & Experiment Tracking
+# ========================================
+logging:
+  use_wandb: true
+  wandb_project: abdomen-segmentation
+  wandb_entity: null                # Set to your W&B username/team
+  log_every_n_steps: 10
+  save_dir: logs
+
+# ========================================
+# Reproducibility
+# ========================================
+seed: 42
+deterministic: false                # Set to true for full reproducibility (slower)
+

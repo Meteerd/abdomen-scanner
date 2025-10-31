@@ -59,7 +59,8 @@ def verify_core_packages():
     
     packages = {
         # Phase 1: Data Processing
-        "pandas": "Data manipulation (CSV parsing)",
+        "pandas": "Data manipulation (Excel/CSV parsing)",
+        "openpyxl": "Excel file reading",
         "numpy": "Numerical operations",
         "pydicom": "DICOM file reading",
         "SimpleITK": "Medical image I/O (NIfTI conversion)",
@@ -213,29 +214,67 @@ def verify_data_files():
     
     project_root = Path(__file__).parent
     
+    # Check for Excel annotation file
+    excel_file = "Temp/Information.xlsx"
+    full_path = project_root / excel_file
+    excel_exists = full_path.exists()
+    
+    data_present = True
+    
+    if excel_exists:
+        # Check Excel sheets
+        import pandas as pd
+        try:
+            xl = pd.ExcelFile(full_path)
+            sheets = xl.sheet_names
+            has_training = 'TRAIININGDATA' in sheets  # Note: 3 i's
+            has_competition = 'COMPETITIONDATA' in sheets
+            
+            status = f"✓ (sheets: {', '.join(sheets)})"
+            if has_training and has_competition:
+                # Count rows
+                train_df = pd.read_excel(full_path, sheet_name='TRAIININGDATA')
+                bbox_count = len(train_df[train_df['Type'] == 'Bounding Box'])
+                status += f" - {bbox_count} bounding boxes"
+            print_status(f"{excel_file:40s}", True, status)
+        except Exception as e:
+            print_status(f"{excel_file:40s}", True, f"✓ (cannot read: {e})")
+    else:
+        print_status(f"{excel_file:40s}", False)
+        data_present = False
+        print(f"\n  ⚠️  Expected: Temp/Information.xlsx with TRAIININGDATA and COMPETITIONDATA sheets")
+    
+    # Check for old CSV files (should be placeholders)
     csv_files = [
         "data_raw/annotations/TRAININGDATA.csv",
         "data_raw/annotations/COMPETITIONDATA.csv",
     ]
-    
-    data_present = True
     
     for csv_file in csv_files:
         full_path = project_root / csv_file
         exists = full_path.exists()
         
         if exists:
-            # Count rows
-            import pandas as pd
-            try:
-                df = pd.read_csv(full_path)
-                row_count = len(df)
-                print_status(f"{csv_file:50s}", True, f"{row_count:,} annotations")
-            except Exception as e:
-                print_status(f"{csv_file:50s}", True, "exists but couldn't read")
+            # Check if placeholder
+            with open(full_path, 'r') as f:
+                first_line = f.readline().strip()
+            
+            if 'placeholder' in first_line.lower():
+                print_status(f"{csv_file:50s}", True, "✓ (placeholder - use Excel instead)")
+            else:
+                # Try to count rows
+                import pandas as pd
+                try:
+                    df = pd.read_csv(full_path)
+                    row_count = len(df)
+                    print_status(f"{csv_file:50s}", True, f"{row_count:,} annotations")
+                except Exception as e:
+                    print_status(f"{csv_file:50s}", True, "exists but couldn't read")
         else:
-            print_status(f"{csv_file:50s}", False, "NOT FOUND")
-            data_present = False
+            print_status(f"{csv_file:50s}", False, "NOT FOUND (OK - use Excel)")
+    
+    if not excel_exists:
+        data_present = False
     
     # Check for DICOM files
     dicom_dir = project_root / "data_raw" / "dicom_files"

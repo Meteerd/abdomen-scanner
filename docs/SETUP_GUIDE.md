@@ -15,7 +15,7 @@ This project implements a **weakly-supervised 3D segmentation pipeline** for abd
 ## Prerequisites
 
 ### Hardware Requirements
-- **2x NVIDIA A6000 GPUs** (48GB VRAM each) for distributed training
+- **2x NVIDIA A6000 Pro GPUs** (96GB VRAM each) for distributed training
 - CUDA 12.1+ compatible drivers
 - Sufficient disk space (~500GB recommended for processed data)
 
@@ -82,7 +82,8 @@ pip install torchmetrics>=1.0.0
 The packages are organized by project phase:
 
 #### Phase 1: Data Processing
-- **pandas** - Parse CSV annotations (TRAININGDATA.csv, COMPETITIONDATA.csv)
+- **pandas** - Parse Excel annotations (Information.xlsx with TRAIININGDATA sheet)
+- **openpyxl** - Read Excel files
 - **pydicom** - Read DICOM slices
 - **SimpleITK** - Convert DICOM → NIfTI (3D volumes)
 - **nibabel** - Load/save NIfTI files
@@ -191,12 +192,16 @@ project_root/
 ├── data_raw/                      # Original dataset (not in git)
 │   ├── dicom_files/               # Raw DICOM slices
 │   └── annotations/
-│       ├── TRAININGDATA.csv       # Training set bounding boxes
-│       └── COMPETITIONDATA.csv    # Additional annotations
+│       ├── README.md              # Explains Excel vs CSV format
+│       ├── TRAININGDATA.csv       # Placeholder only
+│       └── COMPETITIONDATA.csv    # Placeholder only
+│
+├── Temp/                          # Working files
+│   └── Information.xlsx           # ⭐ ACTUAL annotations (TRAIININGDATA sheet)
 │
 ├── data_processed/                # Processed data (not in git)
 │   ├── nifti_images/              # 3D CT volumes (.nii.gz)
-│   ├── nifti_labels_boxy/         # Phase 1: Boxy 3D labels
+│   ├── nifti_labels_boxy/         # Phase 1: Boxy 3D labels (with z-axis validation)
 │   ├── nifti_labels_medsam/       # Phase 2: MedSAM refined masks
 │   └── yolo_dataset/              # Optional: YOLO format data
 │
@@ -239,12 +244,14 @@ Once your environment is verified, proceed with Phase 1 development:
    - Stacks 2D DICOM slices → 3D NIfTI volumes
    - Output: `data_processed/nifti_images/*.nii.gz`
 
-2. **Generate Boxy Labels:**
+2. **Generate Boxy Labels (with Z-Axis Validation - GAP 1):**
    ```powershell
-   python scripts/make_boxy_labels.py
+   python scripts/make_boxy_labels.py --excel_path Temp/Information.xlsx
    ```
-   - Reads CSV bounding boxes
-   - Creates 3D label volumes with rectangular masks
+   - Reads Excel bounding box and boundary slice annotations
+   - Validates each bbox against anatomical z-axis boundaries
+   - Maps 11 radiologist labels → 6 competition classes
+   - Creates 3D label volumes with validated rectangular masks
    - Output: `data_processed/nifti_labels_boxy/*.nii.gz`
 
 3. **Split Dataset:**
