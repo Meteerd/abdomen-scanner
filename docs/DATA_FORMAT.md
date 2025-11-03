@@ -111,19 +111,19 @@ Based on Koç et al. (2024) Table 2:
 
 **Anatomy:** `Colon`
 
-**⚠️ Problem:** Only 54 annotations (181× fewer than Class 1)  
-**Solution:** Transfer learning pre-training (GAP 3) on public datasets
+**Problem:** Only 54 annotations (181x fewer than Class 1)  
+**Solution:** Mandatory Transfer Learning (Phase 3.A) + Weighted Sampling (Phase 3.B)
 
 ---
 
-### Competition Class 6: Appendicitis (n=54) 🚨 CRITICAL IMBALANCE
+### Competition Class 6: Appendicitis (n=54) CRITICAL IMBALANCE
 **Radiologist Labels:**
 - `Compatible with acute appendicitis` (n=54)
 
 **Anatomy:** `appendix`
 
-**⚠️ Problem:** Only 54 annotations (181× fewer than Class 1)  
-**Solution:** Heavy oversampling + weighted loss
+**Problem:** Only 54 annotations (181x fewer than Class 1)  
+**Solution:** Mandatory Transfer Learning (Phase 3.A) + Weighted Sampling (Phase 3.B)
 
 ---
 

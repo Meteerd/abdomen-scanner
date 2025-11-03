@@ -1,89 +1,110 @@
-# ⚡ Quick Start Guide - Abdomen Scanner
+# Quick Start: The 6-Phase Workflow
 
-> **For impatient developers who want to start NOW**
+This project is **NOT** a single-command process. It is a 6-phase pipeline that requires sequential execution and manual checkpoints.
 
-## 🎯 Your Goal
-Train a 3D U-Net to segment abdominal emergencies from CT scans using the mesh-hpc cluster.
+## Prerequisites
 
----
-
-## 📋 Prerequisites Checklist
-
-Before starting, ensure you have:
-- [x] Tailscale connected
-- [x] SSH access to mesh-hpc (`ssh mete@100.116.63.100`)
-- [x] Data transferred to cluster (in progress)
-- [x] W&B account (optional, for experiment tracking)
+1. All data is on the cluster (`data_raw/dicom_files/`, `Temp/Information.xlsx`)
+2. **AMOS 2022 Dataset** is downloaded and extracted to `data_raw/amos22/`
+3. Python venv is activated: `source /home/mete/abdomen-scanner/venv/bin/activate`
+4. W&B API key is set (optional): `export WANDB_API_KEY=...`
 
 ---
 
-## 🚀 Three Commands to Start Training
+## Execution Workflow
 
-### 1️⃣ Run Phase 1: Process Data (2 hours)
+### Step 1: Run Phase 1 (Data Curation)
 ```bash
-ssh mete@100.116.63.100
-cd /home/mete/abdomen-scanner
 sbatch slurm_phase1_full.sh
 ```
+**Output:** `data_processed/nifti_images/` & `data_processed/nifti_labels_boxy/`  
+**Time:** ~2 hours
 
-**What it does:** 
-- DICOM → NIfTI conversion
-- Create boxy labels with **z-axis anatomical validation** (GAP 1 fix)
-- Maps 11 radiologist labels → 6 competition classes
-- Filters ~5-10% of anatomically invalid annotations
-- Split dataset (80/10/10)
-
-**Monitor:** `squeue -u $USER` and `tail -f logs/phase1_*.out`
-
-### 2️⃣ Run Phase 2: Generate Pseudo-Masks (18 hours)
+### Step 2: Run Phase 1.5 (YOLO Label Validation)
 ```bash
-# After Phase 1 completes
+sbatch slurm_phase1.5_yolo.sh
+```
+**Output:** `models/yolo/baseline_validation/results.csv`  
+**Time:** ~8 hours
+
+**CHECKPOINT:** Manually check `results.csv`. Do not proceed if mAP@0.5 < 0.70.
+
+### Step 3: Run Phase 2 (Pseudo-Mask Generation)
+```bash
 sbatch slurm_phase2_medsam.sh
 ```
+**Output:** `data_processed/nifti_labels_medsam/`  
+**Time:** ~12 hours
 
-**What it does:** MedSAM inference on both GPUs → high-quality 3D masks  
-**Monitor:** `tail -f logs/phase2_*.out`
-
-### 3️⃣ Run Phase 3: Train 3D U-Net (2-7 days)
+### Step 4: Run Phase 2.5 (Manual QC)
 ```bash
-# After Phase 2 completes
-./train.sh phase3_unet_baseline
+python scripts/sample_rare_classes.py --samples_per_class 10
 ```
+**Output:** `phase2_qc_checklist.txt`  
+**Time:** 30 minutes (Manual)
 
-**What it does:** Multi-GPU training with PyTorch Lightning  
-**Monitor:** `tail -f logs/Phase3_Training_*.out`
+**CHECKPOINT:** Manually open the NIfTI files listed in the checklist using ITK-SNAP or 3D Slicer. Do not proceed if >30% of rare class masks are low quality.
+
+### Step 5: Run Phase 3.A (Anatomy Pre-training)
+```bash
+sbatch slurm_phase3a_pretrain.sh
+```
+**Output:** `models/phase3a_amos_pretrain/best_model-*.ckpt`  
+**Time:** ~3 days
+
+**CHECKPOINT:** Check W&B or logs. Do not proceed if validation Dice on AMOS is < 0.75.
+
+### Step 6: Run Phase 3.B (Pathology Fine-tuning)
+```bash
+# Find the best checkpoint from Step 5
+BEST_CKPT=$(ls -t models/phase3a_amos_pretrain/best_model-*.ckpt | head -1)
+echo "Using checkpoint: $BEST_CKPT"
+
+# Run fine-tuning
+sbatch slurm_phase3b_finetune.sh $BEST_CKPT
+```
+**Output:** Final model in `models/phase3b_finetune/`  
+**Time:** ~7 days
+
+**Goal:** Final model with high Dice scores, especially for rare classes.
 
 ---
 
-## 📊 Monitor Your Jobs
+## Monitoring Progress
 
+### Check Job Status
 ```bash
-# Check job status
 squeue -u $USER
-
-# Watch output logs
-tail -f logs/*.out
-
-# Cancel a job
-scancel <job-id>
 ```
 
----
-
-## 🎓 First Time? Read These First
-
-1. **[HPC_CLUSTER_SETUP.md](Tutorials_For_Mete/HPC_CLUSTER_SETUP.md)** - SSH, Tailscale, SLURM basics
-2. **[PROJECT_ROADMAP.md](PROJECT_ROADMAP.md)** - Full 3-phase workflow explained
-3. **[SLURM_QUICK_REFERENCE.md](Tutorials_For_Mete/SLURM_QUICK_REFERENCE.md)** - Common SLURM commands
-
----
-
-## 🐛 Common Issues
-
-### "conda: command not found"
+### View Logs
 ```bash
-source ~/.bashrc
-conda activate abdomen_scanner
+# Phase 1
+tail -f logs/phase1_full_<job_id>.out
+
+# Phase 1.5
+tail -f logs/phase1.5_yolo_<job_id>.out
+
+# Phase 2
+tail -f logs/phase2_medsam_<job_id>.out
+
+# Phase 3.A
+tail -f logs/phase3a_pretrain_<job_id>.out
+
+# Phase 3.B
+tail -f logs/phase3b_finetune_<job_id>.out
+```
+
+### Check W&B Dashboard
+Visit https://wandb.ai/ to see training curves, validation metrics, and sample predictions.
+
+---
+
+## Common Issues
+
+### "Virtual environment not activated"
+```bash
+source /home/mete/abdomen-scanner/venv/bin/activate
 ```
 
 ### "MedSAM checkpoint not found"
@@ -93,17 +114,29 @@ wget -P models/ <medsam_checkpoint_url>
 ```
 
 ### Job stays PENDING
-- Check: `sinfo` (are GPUs available?)
-- AI security team has priority (your job will queue)
+```bash
+# Check partition availability
+sinfo
+
+# Check your job details
+scontrol show job <job_id>
+```
 
 ---
 
-## 📞 Need Help?
+## Next Steps
 
-- **Cluster issues:** DM team lead
-- **Code bugs:** Check `logs/*.err` files
-- **SLURM questions:** Read [mesh-hpc SLURM guide](https://growmesh.notion.site/slurm-job-scheduler)
+After Phase 3.B completes:
+1. **Evaluate on test set** - Run inference on held-out test cases
+2. **Analyze results** - Calculate per-class Dice scores, visualize predictions
+3. **Iterate** - If rare class performance is low, adjust class weights or sampling
+
+For detailed information on each phase, see [PROJECT_ROADMAP.md](PROJECT_ROADMAP.md).
 
 ---
 
-**Ready? SSH into the cluster and run Phase 1!** 🚀
+## Need Help?
+
+1. [PROJECT_ROADMAP.md](PROJECT_ROADMAP.md) - Full workflow details
+2. [HPC_CLUSTER_SETUP.md](../Tutorials_For_Mete/HPC_CLUSTER_SETUP.md) - Cluster access
+3. [SLURM_QUICK_REFERENCE.md](../Tutorials_For_Mete/SLURM_QUICK_REFERENCE.md) - SLURM commands

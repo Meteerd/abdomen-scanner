@@ -20,6 +20,7 @@ import os
 from pathlib import Path
 from typing import List, Dict, Tuple
 import yaml
+import json
 import torch
 import torch.nn as nn
 import pytorch_lightning as pl
@@ -48,52 +49,44 @@ def load_config(config_path: Path) -> Dict:
     return config
 
 
-def load_case_ids(split_file: Path) -> List[str]:
-    """Load case IDs from split text file."""
-    with open(split_file, 'r') as f:
-        case_ids = [line.strip() for line in f if line.strip()]
-    return case_ids
-
-
-def prepare_data_dicts(case_ids: List[str], image_dir: Path, label_dir: Path) -> List[Dict]:
+def load_data_dicts_from_split(split_file: Path) -> List[Dict]:
     """
-    Prepare data dictionaries for MONAI dataset.
+    Load data dictionaries directly from split file.
     
-    Args:
-        case_ids: List of case identifiers
-        image_dir: Directory containing NIfTI images
-        label_dir: Directory containing NIfTI labels
-        
-    Returns:
-        List of dictionaries with 'image' and 'label' keys
+    The file should contain one JSON string per line:
+    {"image": "/path/to/img.nii.gz", "label": "/path/to/lbl.nii.gz", "case_id": "s0000"}
+    
+    This works for both AMOS (Phase 3.A) and processed data (Phase 3.B).
     """
     data_dicts = []
-    
-    for case_id in case_ids:
-        image_path = image_dir / f"{case_id}.nii.gz"
-        label_path = label_dir / f"{case_id}.nii.gz"
-        
-        if image_path.exists() and label_path.exists():
-            data_dicts.append({
-                "image": str(image_path),
-                "label": str(label_path),
-            })
-    
+    with open(split_file, 'r') as f:
+        for line in f:
+            if line.strip():
+                data_dicts.append(json.loads(line))
     return data_dicts
 
 
-def get_transforms(config: Dict, mode: str = 'train'):
+def get_transforms(config: Dict, mode: str = 'train', use_amos: bool = False):
     """
     Get MONAI transforms for train/val.
     
     Args:
         config: Configuration dictionary
         mode: 'train' or 'val'
+        use_amos: If True, use AMOS-specific preprocessing (for Phase 3.A)
         
     Returns:
         MONAI Compose transform
     """
-    # Extract config parameters
+    # Use AMOS-specific transforms if specified
+    if use_amos:
+        from transforms_amos import get_amos_train_transforms, get_amos_val_transforms
+        if mode == 'train':
+            return get_amos_train_transforms()
+        else:
+            return get_amos_val_transforms()
+    
+    # Extract config parameters for pathology training (Phase 3.B)
     patch_size = config.get('aug', {}).get('patch_size', [192, 192, 160])
     target_spacing = config.get('preproc', {}).get('target_spacing', [1.5, 1.5, 2.0])
     intensity_clip = config.get('preproc', {}).get('intensity_clip', [0.5, 99.5])
@@ -175,13 +168,20 @@ class SegmentationModel(pl.LightningModule):
             num_res_units=2,
         )
         
-        # Loss function - DiceCE Loss (handles class imbalance well)
+        # Loss function - DiceCE Loss
         loss_config = config.get('loss', {}).get('dice_ce', {})
+        
+        # Load class weights from config (allows different weights for pre-training vs fine-tuning)
+        class_weights = loss_config.get('class_weights', None)
+        if class_weights:
+            print(f"Applying class weights to loss: {class_weights}")
+            class_weights = torch.tensor(class_weights, dtype=torch.float)
+        
         self.loss_fn = DiceCELoss(
             to_onehot_y=True,
             softmax=True,
             squared_pred=True,
-            ce_weight=torch.tensor([0.5, 2.0, 2.0, 2.0]),  # Weight rare classes more
+            ce_weight=class_weights,
         )
         
         # Metrics
@@ -295,6 +295,12 @@ def main():
         default="phase3_unet_baseline",
         help="Experiment name for logging"
     )
+    parser.add_argument(
+        "--load_weights",
+        type=str,
+        default=None,
+        help="Path to pre-trained checkpoint for transfer learning (GAP 3)"
+    )
     
     args = parser.parse_args()
     
@@ -308,28 +314,25 @@ def main():
     
     # Paths
     paths = config.get('paths', {})
-    nifti_images = Path(paths.get('nifti_images', 'data_processed/nifti_images'))
-    labels_medsam = Path(paths.get('labels_medsam', 'data_processed/nifti_labels_medsam'))
     train_split = Path(paths.get('train_split', 'splits/train_cases.txt'))
     val_split = Path(paths.get('val_split', 'splits/val_cases.txt'))
     models_dir = Path(paths.get('models_dir', 'models'))
     
-    # Load splits
+    # Load data dictionaries directly from split files
     print(f"Loading dataset splits...")
-    train_case_ids = load_case_ids(train_split)
-    val_case_ids = load_case_ids(val_split)
-    print(f"Train cases: {len(train_case_ids)}")
-    print(f"Val cases: {len(val_case_ids)}")
-    
-    # Prepare data dictionaries
-    train_files = prepare_data_dicts(train_case_ids, nifti_images, labels_medsam)
-    val_files = prepare_data_dicts(val_case_ids, nifti_images, labels_medsam)
+    train_files = load_data_dicts_from_split(train_split)
+    val_files = load_data_dicts_from_split(val_split)
     print(f"Train samples: {len(train_files)}")
     print(f"Val samples: {len(val_files)}")
     
+    # Determine if using AMOS dataset (check config for 'amos' or 'pretrain')
+    use_amos = 'amos' in str(args.config).lower() or 'pretrain' in str(args.config).lower()
+    if use_amos:
+        print("Using AMOS-specific preprocessing (Phase 3.A)")
+    
     # Create transforms
-    train_transforms = get_transforms(config, mode='train')
-    val_transforms = get_transforms(config, mode='val')
+    train_transforms = get_transforms(config, mode='train', use_amos=use_amos)
+    val_transforms = get_transforms(config, mode='val', use_amos=use_amos)
     
     # Create datasets
     print("Creating datasets...")
@@ -362,6 +365,34 @@ def main():
     # Create model
     print("Creating model...")
     model = SegmentationModel(config)
+    
+    # Load pre-trained weights if provided (GAP 3: Transfer Learning)
+    if args.load_weights is not None:
+        checkpoint_path = Path(args.load_weights)
+        if not checkpoint_path.exists():
+            raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
+        
+        print(f"\n{'='*60}")
+        print(f"GAP 3: Transfer Learning Enabled")
+        print(f"{'='*60}")
+        print(f"Loading pre-trained weights from: {checkpoint_path}")
+        
+        checkpoint = torch.load(checkpoint_path, map_location="cpu")
+        
+        if "state_dict" in checkpoint:
+            state_dict = checkpoint["state_dict"]
+        else:
+            state_dict = checkpoint
+        
+        missing_keys, unexpected_keys = model.load_state_dict(state_dict, strict=False)
+        
+        if missing_keys:
+            print(f"Missing keys (new layers): {len(missing_keys)}")
+        if unexpected_keys:
+            print(f"Unexpected keys (removed layers): {len(unexpected_keys)}")
+        
+        print(f"Pre-trained weights loaded successfully")
+        print(f"{'='*60}\n")
     
     # Callbacks
     checkpoint_callback = ModelCheckpoint(

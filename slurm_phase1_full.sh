@@ -23,10 +23,9 @@ mkdir -p logs
 # Navigate to project directory
 cd /home/mete/abdomen-scanner || exit 1
 
-# Activate conda environment
-echo "Activating conda environment..."
-source ~/.bashrc
-conda activate abdomen_scanner
+# Activate Python virtual environment
+echo "Activating virtual environment..."
+source /home/mete/abdomen-scanner/venv/bin/activate
 
 # Verify environment
 echo "Python: $(which python)"
@@ -38,7 +37,7 @@ echo "=========================================="
 echo "Step 1: Converting DICOM to NIfTI"
 echo "=========================================="
 python scripts/dicom_to_nifti.py \
-    --dicom_root data_raw/dicom_files \
+    --dicom_root data/AbdomenDataSet/Training-DataSets \
     --out_dir data_processed/nifti_images
 
 if [ $? -ne 0 ]; then
@@ -52,7 +51,6 @@ echo "=========================================="
 echo "Step 2: Generating 3D Boxy Labels (GAP 1)"
 echo "=========================================="
 python scripts/make_boxy_labels.py \
-    --excel_path Temp/Information.xlsx \
     --nifti_dir data_processed/nifti_images \
     --out_dir data_processed/nifti_labels_boxy
 
@@ -62,39 +60,23 @@ if [ $? -ne 0 ]; then
 fi
 echo ""
 
-# Step 3: Create Dataset Splits
-echo "=========================================="
-echo "Step 3: Creating Dataset Splits"
-echo "=========================================="
-python scripts/split_dataset.py \
-    --nifti_dir data_processed/nifti_images \
-    --train_out splits/train_cases.txt \
-    --val_out splits/val_cases.txt \
-    --test_out splits/test_cases.txt \
-    --train 0.8 \
-    --val 0.1 \
-    --test 0.1 \
-    --seed 42
-
-if [ $? -ne 0 ]; then
-    echo "ERROR: Dataset splitting failed!"
-    exit 1
-fi
-echo ""
-
-# Summary
+# Phase 1 Complete
 echo "=========================================="
 echo "Phase 1 Complete!"
 echo "=========================================="
 echo "Finished at: $(date)"
 echo ""
-echo "Next steps:"
-echo "  1. Version data with DVC:"
-echo "     dvc add data_processed/nifti_images"
-echo "     dvc add data_processed/nifti_labels_boxy"
-echo "     git add data_processed/*.dvc splits/*.txt"
-echo "     git commit -m 'feat: Complete Phase 1 data processing'"
+echo "Data processed:"
+echo "  - NIfTI images: data_processed/nifti_images/"
+echo "  - Boxy labels: data_processed/nifti_labels_boxy/"
 echo ""
-echo "  2. Proceed to Phase 2 (MedSAM inference):"
-echo "     sbatch slurm_phase2_medsam.sh"
+echo "Next steps:"
+echo "  1. Verify outputs:"
+echo "     ls -lh data_processed/nifti_images/ | head"
+echo ""
+echo "  2. Proceed to Phase 1.5 (YOLO label validation):"
+echo "     sbatch slurm_phase1.5_yolo.sh"
+echo ""
+echo "Note: Dataset splits for 3D training will be created"
+echo "      after Phase 2 (MedSAM) completes."
 echo "=========================================="

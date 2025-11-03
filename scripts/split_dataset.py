@@ -3,7 +3,7 @@ Phase 1 - Step 3: Split Dataset into Train/Val/Test
 
 Purpose:
 - Split unique case IDs into train/val/test sets.
-- Creates text files with one case ID per line for reproducibility.
+- Creates JSON format files compatible with train_monai.py
 
 Usage:
     python scripts/split_dataset.py --nifti_dir data_processed/nifti_images --train 0.8 --val 0.1 --test 0.1 --seed 42
@@ -14,6 +14,7 @@ import os
 from pathlib import Path
 from typing import List, Tuple
 import random
+import json
 
 
 def get_case_ids(nifti_dir: Path) -> List[str]:
@@ -70,27 +71,35 @@ def split_cases(case_ids: List[str], train_ratio: float, val_ratio: float, test_
     return train_cases, val_cases, test_cases
 
 
-def save_split(case_ids: List[str], out_path: Path):
+def save_split(case_ids: List[str], out_path: Path, image_dir: Path, label_dir: Path):
     """
-    Save case IDs to a text file (one per line).
+    Save split to file in JSON format (one dict per line).
     
     Args:
         case_ids: List of case IDs
         out_path: Output file path
+        image_dir: Directory containing NIfTI images
+        label_dir: Directory containing NIfTI labels
     """
     out_path.parent.mkdir(parents=True, exist_ok=True)
     
     with open(out_path, 'w') as f:
         for case_id in case_ids:
-            f.write(f"{case_id}\n")
+            data_dict = {
+                "image": str(image_dir / f"{case_id}.nii.gz"),
+                "label": str(label_dir / f"{case_id}.nii.gz"),
+                "case_id": case_id
+            }
+            f.write(json.dumps(data_dict) + "\n")
 
 
-def create_dataset_splits(nifti_dir: Path, train_out: Path, val_out: Path, test_out: Path, train_ratio: float, val_ratio: float, test_ratio: float, seed: int):
+def create_dataset_splits(nifti_dir: Path, label_dir: Path, train_out: Path, val_out: Path, test_out: Path, train_ratio: float, val_ratio: float, test_ratio: float, seed: int):
     """
-    Create train/val/test splits and save to text files.
+    Create train/val/test splits and save to JSON format files.
     
     Args:
-        nifti_dir: Directory containing NIfTI files
+        nifti_dir: Directory containing NIfTI images
+        label_dir: Directory containing NIfTI labels
         train_out: Output path for train split
         val_out: Output path for val split
         test_out: Output path for test split
@@ -115,9 +124,9 @@ def create_dataset_splits(nifti_dir: Path, train_out: Path, val_out: Path, test_
     
     # Save splits
     print(f"\nSaving splits...")
-    save_split(train_cases, train_out)
-    save_split(val_cases, val_out)
-    save_split(test_cases, test_out)
+    save_split(train_cases, train_out, nifti_dir, label_dir)
+    save_split(val_cases, val_out, nifti_dir, label_dir)
+    save_split(test_cases, test_out, nifti_dir, label_dir)
     
     # Summary
     print(f"\n{'='*60}")
@@ -135,7 +144,13 @@ def main():
         "--nifti_dir",
         type=str,
         default="data_processed/nifti_images",
-        help="Directory containing NIfTI files"
+        help="Directory containing NIfTI images"
+    )
+    parser.add_argument(
+        "--label_dir",
+        type=str,
+        default="data_processed/nifti_labels_medsam",
+        help="Directory containing NIfTI labels"
     )
     parser.add_argument(
         "--train_out",
@@ -183,12 +198,28 @@ def main():
     args = parser.parse_args()
     
     nifti_dir = Path(args.nifti_dir)
+    label_dir = Path(args.label_dir)
     train_out = Path(args.train_out)
     val_out = Path(args.val_out)
     test_out = Path(args.test_out)
     
     if not nifti_dir.exists():
         raise FileNotFoundError(f"NIfTI directory not found: {nifti_dir}")
+    
+    if not label_dir.exists():
+        raise FileNotFoundError(f"Label directory not found: {label_dir}")
+    
+    create_dataset_splits(
+        nifti_dir=nifti_dir,
+        label_dir=label_dir,
+        train_out=train_out,
+        val_out=val_out,
+        test_out=test_out,
+        train_ratio=args.train,
+        val_ratio=args.val,
+        test_ratio=args.test,
+        seed=args.seed
+    )
     
     print(f"Starting dataset split...")
     print(f"Input: {nifti_dir}\n")

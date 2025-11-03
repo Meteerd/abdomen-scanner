@@ -24,10 +24,9 @@ mkdir -p logs
 # Navigate to project directory
 cd /home/mete/abdomen-scanner || exit 1
 
-# Activate conda environment
-echo "Activating conda environment..."
-source ~/.bashrc
-conda activate abdomen_scanner
+# Activate Python virtual environment
+echo "Activating virtual environment..."
+source /home/mete/abdomen-scanner/venv/bin/activate
 
 # Verify environment
 echo "Python: $(which python)"

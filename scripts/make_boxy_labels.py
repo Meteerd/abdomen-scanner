@@ -87,26 +87,43 @@ PATHOLOGY_TO_ANATOMY = {
 
 def parse_excel_annotations(excel_path: Path) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """
-    Load and parse the Information.xlsx file with TRAININGDATA and COMPETITIONDATA sheets.
+    Load and parse CSV annotation files (TRAININGDATA.csv + COMPETITIONDATA.csv).
     
     Args:
-        excel_path: Path to Information.xlsx
+        excel_path: Path to annotations directory or legacy Excel file (for backward compatibility)
         
     Returns:
         Tuple of (bounding_boxes_df, boundary_slices_df)
     """
-    print(f"Loading annotations from {excel_path}...")
+    # Check if CSV files exist in data_raw/annotations/
+    csv_dir = Path("data_raw/annotations")
+    train_csv = csv_dir / "TRAININGDATA.csv"
+    comp_csv = csv_dir / "COMPETITIONDATA.csv"
     
-    # Read TRAININGDATA sheet
-    train_df = pd.read_excel(excel_path, sheet_name='TRAIININGDATA')
+    if train_csv.exists() and comp_csv.exists():
+        print(f"Loading annotations from CSV files in {csv_dir}...")
+        
+        # Read both CSV files
+        train_df = pd.read_csv(train_csv)
+        comp_df = pd.read_csv(comp_csv)
+        
+        # Merge datasets
+        combined_df = pd.concat([train_df, comp_df], ignore_index=True)
+        print(f"Merged {len(train_df)} training + {len(comp_df)} competition annotations")
+        
+    else:
+        # Fallback to Excel file
+        print(f"CSV files not found, loading from Excel: {excel_path}...")
+        train_df = pd.read_excel(excel_path, sheet_name='TRAIININGDATA')
+        combined_df = train_df
     
     # Split into bounding boxes and boundary slices
-    bbox_df = train_df[train_df['Type'] == 'Bounding Box'].copy()
-    boundary_df = train_df[train_df['Type'] == 'Boundary Slice'].copy()
+    bbox_df = combined_df[combined_df['Type'] == 'Bounding Box'].copy()
+    boundary_df = combined_df[combined_df['Type'] == 'Boundary Slice'].copy()
     
     print(f"Found {len(bbox_df)} bounding boxes")
     print(f"Found {len(boundary_df)} boundary slices")
-    print(f"Total cases: {train_df['Case Number'].nunique()}")
+    print(f"Total cases: {combined_df['Case Number'].nunique()}")
     
     # Show class distribution
     print("\nBounding Box class distribution:")
