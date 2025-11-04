@@ -1,12 +1,13 @@
 #!/bin/bash
 #SBATCH --job-name=Phase3B_Finetune
-#SBATCH --output=logs/phase3b_finetune_%j.out
-#SBATCH --error=logs/phase3b_finetune_%j.err
+#SBATCH --output=./logs/%x_%j.out
+#SBATCH --error=./logs/%x_%j.err
 #SBATCH --partition=mesh
 #SBATCH --gres=gpu:2
 #SBATCH --cpus-per-task=32
 #SBATCH --mem=128G
-#SBATCH --time=168:00:00
+#SBATCH --time=170:00:00          # 170 hours (+2h buffer)
+#SBATCH --oversubscribe
 
 echo "=========================================="
 echo "Phase 3.B: Fine-tuning on Pathology (GAP 3)"
@@ -47,6 +48,22 @@ cd /home/mete/abdomen-scanner || exit 1
 
 # Activate environment
 echo "Activating virtual environment..."
+source venv/bin/activate
+
+# Verify Python environment
+echo "Python: $(which python)"
+echo "PyTorch version: $(python -c 'import torch; print(torch.__version__)')"
+echo ""
+
+# Check GPU status
+echo "GPU Status:"
+nvidia-smi
+echo ""
+
+# Set CUDA devices (for dual GPU setup)
+export CUDA_VISIBLE_DEVICES=0,1
+echo "Using GPUs: $CUDA_VISIBLE_DEVICES"
+echo ""
 source venv/bin/activate
 
 # Verify environment

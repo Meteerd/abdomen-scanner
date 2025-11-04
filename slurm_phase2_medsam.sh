@@ -1,14 +1,15 @@
 #!/bin/bash
 #SBATCH --job-name=Phase2_MedSAM
-#SBATCH --output=logs/phase2_%j.out
-#SBATCH --error=logs/phase2_%j.err
+#SBATCH --output=./logs/%x_%j.out
+#SBATCH --error=./logs/%x_%j.err
 #SBATCH --partition=mesh
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
 #SBATCH --gres=gpu:2              # Request BOTH GPUs
 #SBATCH --cpus-per-task=32        # 32 CPU cores
 #SBATCH --mem=90G                 # 90GB RAM
-#SBATCH --time=48:00:00           # Allow up to 48 hours
+#SBATCH --time=60:00:00           # 60 hours (safe buffer)
+#SBATCH --oversubscribe
 
 echo "=========================================="
 echo "Phase 2: MedSAM Inference (Dual-GPU)"
@@ -53,21 +54,13 @@ echo "GPU Status:"
 nvidia-smi
 echo ""
 
-# Step 0: Export Excel to CSV for MedSAM compatibility
-echo "=========================================="
-echo "Step 0: Exporting Excel to CSV"
-echo "=========================================="
-python scripts/export_excel_to_csv.py \
-    --excel_path Temp/Information.xlsx \
-    --out_csv data_raw/annotations/TRAININGDATA_exported.csv
-
-if [ $? -ne 0 ]; then
-    echo "ERROR: Excel to CSV export failed!"
-    exit 1
-fi
+# CSV files location - medsam_infer.py will merge both TRAININGDATA.csv and COMPETITIONDATA.csv
+CSV_DIR="data_raw/annotations"
+echo "Using annotation directory: $CSV_DIR"
+echo "  - TRAININGDATA.csv (28,135 annotations)"
+echo "  - COMPETITIONDATA.csv (14,315 annotations)"
+echo "  - Total: 42,450 annotations"
 echo ""
-
-CSV_FILE="data_raw/annotations/TRAININGDATA_exported.csv"
 
 # Step 1: Run MedSAM inference on GPU 0 and GPU 1 in parallel
 echo "=========================================="
@@ -78,7 +71,7 @@ echo "Launching 2 parallel processes (one per GPU)..."
 # Launch process for GPU 0 on the first half of the data
 echo "Starting GPU 0 process..."
 CUDA_VISIBLE_DEVICES=0 python scripts/medsam_infer.py \
-    --master_csv "$CSV_FILE" \
+    --csv_dir "$CSV_DIR" \
     --dicom_root data_raw/dicom_files \
     --out_root data_processed/medsam_2d_masks \
     --medsam_ckpt "$MEDSAM_CKPT" \
@@ -92,7 +85,7 @@ echo "GPU 0 process started with PID: $PID_GPU0"
 # Launch process for GPU 1 on the second half of the data
 echo "Starting GPU 1 process..."
 CUDA_VISIBLE_DEVICES=1 python scripts/medsam_infer.py \
-    --master_csv "$CSV_FILE" \
+    --csv_dir "$CSV_DIR" \
     --dicom_root data_raw/dicom_files \
     --out_root data_processed/medsam_2d_masks \
     --medsam_ckpt "$MEDSAM_CKPT" \
@@ -158,6 +151,6 @@ echo "     dvc add data_processed/nifti_labels_medsam"
 echo "     git add data_processed/nifti_labels_medsam.dvc"
 echo "     git commit -m 'feat: Complete Phase 2 MedSAM mask generation'"
 echo ""
-echo "  2. Proceed to Phase 3 (3D U-Net training):"
-echo "     ./train.sh phase3_unet_baseline"
+echo "  2. Proceed to Phase 2.5 (Create 3D Training Splits):"
+echo "     sbatch slurm_phase2.5_splits.sh"
 echo "=========================================="

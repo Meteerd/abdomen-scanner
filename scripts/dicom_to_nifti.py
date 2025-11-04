@@ -131,10 +131,20 @@ def convert_dicom_to_nifti(dicom_root: Path, out_dir: Path):
     
     # Process each case
     success_count = 0
+    skipped_count = 0
     failed_cases = []
     
     for case_id, dicom_files in tqdm(cases.items(), desc="Converting to NIfTI"):
         try:
+            # Create safe filename
+            safe_case_id = "".join(c if c.isalnum() or c in ('-', '_') else '_' for c in case_id)
+            out_path = out_dir / f"{safe_case_id}.nii.gz"
+            
+            # Skip if already exists
+            if out_path.exists():
+                skipped_count += 1
+                continue
+            
             # Sort slices
             sorted_files = sort_dicom_slices(dicom_files)
             
@@ -144,10 +154,6 @@ def convert_dicom_to_nifti(dicom_root: Path, out_dir: Path):
             
             # Load as 3D volume
             image = load_dicom_series(sorted_files)
-            
-            # Create safe filename
-            safe_case_id = "".join(c if c.isalnum() or c in ('-', '_') else '_' for c in case_id)
-            out_path = out_dir / f"{safe_case_id}.nii.gz"
             
             # Save as NIfTI
             sitk.WriteImage(image, str(out_path), useCompression=True)
@@ -162,7 +168,9 @@ def convert_dicom_to_nifti(dicom_root: Path, out_dir: Path):
     # Summary
     print(f"\n{'='*60}")
     print(f"Conversion complete!")
-    print(f"Successfully converted: {success_count}/{len(cases)} cases")
+    print(f"Successfully converted: {success_count} new cases")
+    print(f"Skipped (already exist): {skipped_count}")
+    print(f"Total cases: {len(cases)}")
     print(f"Output directory: {out_dir}")
     
     if failed_cases:

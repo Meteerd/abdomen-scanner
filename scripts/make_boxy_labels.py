@@ -413,22 +413,35 @@ def generate_boxy_labels(excel_path: Path, nifti_dir: Path, out_dir: Path):
     }
     
     for nifti_path in tqdm(nifti_files, desc="Generating boxy labels"):
-        # Extract case number from filename (e.g., "case_20001.nii.gz" → 20001)
+        # Extract case number from filename
+        # Format: "1_2_840_10009_1_2_3_10001_20001.nii.gz" → 20001
+        # Or: "case_20001.nii.gz" → 20001
         case_str = nifti_path.stem.replace('.nii', '')
         
         # Try to extract numeric case number
         try:
             if 'case_' in case_str:
+                # Format: case_20001
                 case_number = int(case_str.split('case_')[1])
+            elif '_' in case_str:
+                # Format: DICOM_UID_20001 - take last part
+                case_number = int(case_str.split('_')[-1])
             else:
+                # Plain number
                 case_number = int(case_str)
-        except ValueError:
+        except (ValueError, IndexError):
             print(f"Warning: Could not parse case number from filename: {nifti_path.name}")
             skipped_count += 1
             continue
         
         # Check if this case has annotations
         if case_number not in annotated_cases:
+            skipped_count += 1
+            continue
+        
+        # Check if output already exists
+        out_path = out_dir / f"case_{case_number}.nii.gz"
+        if out_path.exists():
             skipped_count += 1
             continue
         
@@ -457,7 +470,6 @@ def generate_boxy_labels(excel_path: Path, nifti_dir: Path, out_dir: Path):
             )
             
             # Save label volume
-            out_path = out_dir / f"case_{case_number}.nii.gz"
             nib.save(label_img, str(out_path))
             
             # Update statistics

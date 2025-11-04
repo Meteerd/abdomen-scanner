@@ -1,12 +1,13 @@
 #!/bin/bash
 #SBATCH --job-name=Phase3A_Pretrain
-#SBATCH --output=logs/phase3a_pretrain_%j.out
-#SBATCH --error=logs/phase3a_pretrain_%j.err
+#SBATCH --output=./logs/%x_%j.out
+#SBATCH --error=./logs/%x_%j.err
 #SBATCH --partition=mesh
 #SBATCH --gres=gpu:2              # 2x RTX 6000 GPUs
 #SBATCH --cpus-per-task=32        # 16 workers per GPU
 #SBATCH --mem=128G                # Full node memory
-#SBATCH --time=72:00:00           # 3 days
+#SBATCH --time=74:00:00           # 74 hours (+2h buffer)
+#SBATCH --oversubscribe
 
 echo "=========================================="
 echo "Phase 3.A: Pre-training on AMOS 2022 (GAP 3)"
@@ -28,6 +29,16 @@ echo "Python: $(which python)"
 echo "PyTorch version: $(python -c 'import torch; print(torch.__version__)')"
 echo "CUDA available: $(python -c 'import torch; print(torch.cuda.is_available())')"
 echo "GPU count: $(python -c 'import torch; print(torch.cuda.device_count())')"
+echo ""
+
+# Check GPU status
+echo "GPU Status:"
+nvidia-smi
+echo ""
+
+# Set CUDA devices (for dual GPU setup)
+export CUDA_VISIBLE_DEVICES=0,1
+echo "Using GPUs: $CUDA_VISIBLE_DEVICES"
 echo ""
 
 # Set environment variables for distributed training

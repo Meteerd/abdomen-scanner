@@ -1,12 +1,13 @@
 #!/bin/bash
 #SBATCH --job-name=Phase1.5_YOLO
-#SBATCH --output=logs/phase1.5_yolo_%j.out
-#SBATCH --error=logs/phase1.5_yolo_%j.err
+#SBATCH --output=./logs/%x_%j.out
+#SBATCH --error=./logs/%x_%j.err
 #SBATCH --partition=mesh
 #SBATCH --gres=gpu:1              # Single GPU sufficient for YOLO
 #SBATCH --cpus-per-task=16
 #SBATCH --mem=32G
-#SBATCH --time=08:00:00           # 8 hours max
+#SBATCH --time=10:00:00           # 10 hours (+2h buffer)
+#SBATCH --oversubscribe
 
 echo "=========================================="
 echo "Phase 1.5: YOLO Baseline Validation (GAP 2)"
@@ -31,10 +32,12 @@ echo "Python: $(which python)"
 echo "Python version: $(python --version)"
 echo ""
 
-# Check GPU
+# GPU selection and setup
 echo "GPU Status:"
 nvidia-smi
 echo ""
+
+
 
 # Step 1: Install YOLO if not already installed
 echo "=========================================="
@@ -64,6 +67,11 @@ else
 fi
 
 echo ""
+
+# Disable problematic integrations
+export CLEARML_DISABLED=1
+export COMET_DISABLED=1
+export WANDB_DISABLED=1
 
 # Step 3: Train YOLOv11
 echo "=========================================="

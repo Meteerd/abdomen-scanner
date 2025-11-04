@@ -1,12 +1,13 @@
 #!/bin/bash
 #SBATCH --job-name=Phase2.5_Splits
-#SBATCH --output=logs/phase2.5_splits_%j.out
-#SBATCH --error=logs/phase2.5_splits_%j.err
+#SBATCH --output=./logs/%x_%j.out
+#SBATCH --error=./logs/%x_%j.err
 #SBATCH --partition=mesh
 #SBATCH --nodes=1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=16G
-#SBATCH --time=00:30:00           # 30 mins
+#SBATCH --time=02:30:00           # 2.5 hours (+2h buffer)
+#SBATCH --oversubscribe
 
 echo "=========================================="
 echo "Phase 2.5: Creating 3D Training Splits"

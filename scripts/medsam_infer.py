@@ -2,21 +2,22 @@
 Phase 2 - MedSAM Inference for 2D Mask Generation
 
 Purpose:
-- For each bbox annotation in CSV, run MedSAM on the 2D DICOM/NIfTI slice to create a binary mask.
+- For each bbox annotation in CSV files, run MedSAM on the 2D DICOM/NIfTI slice to create a binary mask.
+- Merges TRAININGDATA.csv and COMPETITIONDATA.csv to process all 42,450 annotations.
 - Supports parallel execution across multiple GPUs.
 
 Usage:
     # Single GPU
-    python scripts/medsam_infer.py --master_csv data_raw/annotations/TRAININGDATA.csv --dicom_root data_raw/dicom_files --out_root data_processed/medsam_2d_masks --medsam_ckpt models/medsam_vit_b.pth
+    python scripts/medsam_infer.py --csv_dir data_raw/annotations --dicom_root data_raw/dicom_files --out_root data_processed/medsam_2d_masks --medsam_ckpt models/medsam_vit_b.pth
     
     # Multi-GPU (split by GPU in SLURM script)
-    CUDA_VISIBLE_DEVICES=0 python scripts/medsam_infer.py --master_csv data_raw/annotations/TRAININGDATA.csv --gpu_idx 0 --num_gpus 2 ...
+    CUDA_VISIBLE_DEVICES=0 python scripts/medsam_infer.py --csv_dir data_raw/annotations --gpu_idx 0 --num_gpus 2 ...
 """
 
 import argparse
 import os
 from pathlib import Path
-from typing import Tuple, Optional
+from typing import Tuple, Optional, Dict
 import numpy as np
 import pandas as pd
 import torch
@@ -169,58 +170,141 @@ def run_medsam_inference(model: object, transform: object, image: np.ndarray, bb
     return mask_binary
 
 
-def load_slice_from_dicom(dicom_root: Path, case_id: str, slice_idx: int) -> Optional[np.ndarray]:
+def parse_bbox_data(data_str: str) -> Tuple[int, int, int, int]:
     """
-    Load a specific slice from DICOM files.
+    Parse bounding box coordinates from Data column.
+    
+    Format: "xmin,ymin-xmax,ymax"
+    Returns: (xmin, ymin, xmax, ymax)
+    """
+    min_str, max_str = data_str.split('-')
+    xmin, ymin = map(int, min_str.split(','))
+    xmax, ymax = map(int, max_str.split(','))
+    return xmin, ymin, xmax, ymax
+
+
+def build_dicom_manifest(dicom_root: Path) -> Dict[Tuple[int, int], Path]:
+    """
+    Build a manifest mapping (Case Number, Image Id) to DICOM file path.
+    
+    The Image Id corresponds to the DICOM InstanceNumber tag,
+    NOT the filename (e.g., filename "100007.dcm" may have InstanceNumber=77).
+    
+    Returns:
+        Dictionary mapping (case_number, image_id) to file path
+    """
+    print(f"Building DICOM manifest from {dicom_root}...")
+    manifest = {}
+    
+    # Find all case directories
+    case_dirs = [d for d in dicom_root.iterdir() if d.is_dir()]
+    
+    for case_dir in tqdm(case_dirs, desc="Scanning DICOM directories"):
+        # Extract case number from directory name
+        try:
+            case_number = int(''.join(filter(str.isdigit, case_dir.name)))
+        except ValueError:
+            continue
+        
+        # Scan all DICOM files in this case
+        for dcm_file in case_dir.glob("*.dcm"):
+            try:
+                # Read DICOM header only (fast - doesn't load pixel data)
+                dcm = pydicom.dcmread(str(dcm_file), stop_before_pixels=True)
+                
+                # Use InstanceNumber tag as Image Id (what CSV references)
+                image_id = int(dcm.InstanceNumber)
+                
+                # Store mapping
+                manifest[(case_number, image_id)] = dcm_file
+                
+            except Exception as e:
+                continue
+    
+    print(f"Found {len(manifest)} DICOM files across {len(case_dirs)} cases")
+    return manifest
+
+
+def apply_ct_window(pixel_array: np.ndarray, window_center: int = 40, window_width: int = 400) -> np.ndarray:
+    """
+    Apply CT windowing (soft tissue window) and convert to 8-bit image.
     
     Args:
-        dicom_root: Root directory containing DICOM files
-        case_id: Case identifier
-        slice_idx: Slice index
+        pixel_array: Raw DICOM pixel array (Hounsfield units)
+        window_center: Center of the window (default: 40 HU for soft tissue)
+        window_width: Width of the window (default: 400 HU)
         
     Returns:
-        2D numpy array or None if not found
+        8-bit grayscale image (0-255) as 2D array
     """
-    # This is a placeholder - actual implementation depends on your DICOM structure
-    # You may need to adjust based on how DICOMs are organized
+    # Ensure 2D array (squeeze any extra dimensions)
+    if pixel_array.ndim > 2:
+        pixel_array = pixel_array.squeeze()
     
-    case_dir = dicom_root / case_id
-    if not case_dir.exists():
-        return None
+    # If still not 2D, take first slice
+    if pixel_array.ndim > 2:
+        pixel_array = pixel_array[0]
     
-    # Find the DICOM file for this slice
-    dicom_files = sorted(case_dir.glob("*.dcm"))
+    # Convert to float to avoid overflow
+    pixel_array = pixel_array.astype(np.float32)
     
-    if slice_idx >= len(dicom_files):
-        return None
+    img_min = float(window_center - window_width // 2)
+    img_max = float(window_center + window_width // 2)
     
-    # Load DICOM
-    dcm = pydicom.dcmread(str(dicom_files[slice_idx]))
-    image = dcm.pixel_array.astype(np.float32)
+    # Clip and normalize to 0-255
+    windowed = np.clip(pixel_array, img_min, img_max)
+    windowed = ((windowed - img_min) / (img_max - img_min) * 255.0)
+    windowed = windowed.astype(np.uint8)
     
-    return image
+    return windowed
 
 
-def process_annotations(master_csv: Path, dicom_root: Path, out_root: Path, medsam_ckpt: Path, gpu_idx: int = 0, num_gpus: int = 1, device: str = 'cuda'):
+def process_annotations(
+    csv_dir: Path,
+    dicom_root: Path,
+    out_root: Path,
+    medsam_ckpt: Path,
+    gpu_idx: int,
+    num_gpus: int,
+    device: str
+):
     """
     Process all annotations and generate MedSAM masks.
     
     Args:
-        master_csv: Path to master CSV
-        dicom_root: Root directory with DICOM files
-        out_root: Output root for masks
+        csv_dir: Directory containing TRAININGDATA.csv and COMPETITIONDATA.csv
+        dicom_root: Root directory containing DICOM files
+        out_root: Output root directory
         medsam_ckpt: Path to MedSAM checkpoint
-        gpu_idx: GPU index for multi-GPU processing
+        gpu_idx: Index of current GPU
         num_gpus: Total number of GPUs
         device: Device string
     """
     # Create output directory
     out_root.mkdir(parents=True, exist_ok=True)
     
-    # Load annotations
-    print(f"Loading annotations from {master_csv}...")
-    df = pd.read_csv(master_csv)
-    print(f"Found {len(df)} annotations")
+    # Load and merge annotations
+    train_csv = csv_dir / "TRAININGDATA.csv"
+    comp_csv = csv_dir / "COMPETITIONDATA.csv"
+    
+    print(f"Loading annotations from:")
+    print(f"  - {train_csv}")
+    print(f"  - {comp_csv}")
+    
+    train_df = pd.read_csv(train_csv)
+    comp_df = pd.read_csv(comp_csv)
+    df = pd.concat([train_df, comp_df], ignore_index=True)
+    
+    print(f"Merged {len(train_df)} training + {len(comp_df)} competition = {len(df)} total annotations")
+    
+    # Filter to bounding boxes only
+    df = df[df['Type'] == 'Bounding Box'].copy()
+    print(f"Filtered to {len(df)} bounding box annotations")
+    
+    # Show class distribution
+    print("\nClass distribution:")
+    print(df['Class'].value_counts())
+    print()
     
     # Split annotations across GPUs
     if num_gpus > 1:
@@ -230,40 +314,63 @@ def process_annotations(master_csv: Path, dicom_root: Path, out_root: Path, meds
         df = df.iloc[start_idx:end_idx]
         print(f"GPU {gpu_idx}: Processing annotations {start_idx} to {end_idx} ({len(df)} total)")
     
+    # Build DICOM manifest (FIX BUG #2)
+    print("\nBuilding DICOM manifest...")
+    dicom_manifest = build_dicom_manifest(dicom_root)
+    
     # Load MedSAM model
-    print(f"Loading MedSAM model from {medsam_ckpt}...")
+    print(f"\nLoading MedSAM model from {medsam_ckpt}...")
     model, transform = load_medsam_model(medsam_ckpt, device)
     print(f"Model loaded on {device}")
     
     # Process each annotation
     success_count = 0
+    skipped_count = 0
     failed_count = 0
     
     for idx, row in tqdm(df.iterrows(), total=len(df), desc=f"GPU {gpu_idx} - MedSAM inference"):
         try:
-            case_id = row['case_id']
-            slice_idx = int(row['slice_idx'])
-            x_min = int(row['x_min'])
-            y_min = int(row['y_min'])
-            x_max = int(row['x_max'])
-            y_max = int(row['y_max'])
+            # FIX BUG #1: Use correct CSV column names
+            case_number = int(row['Case Number'])
+            image_id = int(row['Image Id'])
             
-            # Load slice
-            image = load_slice_from_dicom(dicom_root, case_id, slice_idx)
+            # Parse bounding box from Data column
+            data_str = row['Data']
+            x_min, y_min, x_max, y_max = parse_bbox_data(data_str)
             
-            if image is None:
+            # Check if mask already exists
+            case_out_dir = out_root / f"case_{case_number}"
+            mask_path = case_out_dir / f"image_{image_id}_mask.npy"
+            
+            if mask_path.exists():
+                skipped_count += 1
+                continue
+            
+            # FIX BUG #2: Load DICOM using manifest
+            dicom_key = (case_number, image_id)
+            if dicom_key not in dicom_manifest:
                 failed_count += 1
                 continue
+            
+            dicom_path = dicom_manifest[dicom_key]
+            
+            # Read DICOM file
+            dcm = pydicom.dcmread(str(dicom_path))
+            pixel_array = dcm.pixel_array
+            
+            # Convert to Hounsfield Units if needed
+            if hasattr(dcm, 'RescaleSlope') and hasattr(dcm, 'RescaleIntercept'):
+                pixel_array = pixel_array * dcm.RescaleSlope + dcm.RescaleIntercept
+            
+            # Apply CT windowing to convert to 8-bit
+            image = apply_ct_window(pixel_array)
             
             # Run MedSAM inference
             mask = run_medsam_inference(model, transform, image, (x_min, y_min, x_max, y_max), device)
             
-            # Save mask
-            case_out_dir = out_root / case_id
+            # Save mask as numpy array
             case_out_dir.mkdir(parents=True, exist_ok=True)
-            
-            mask_path = case_out_dir / f"slice_{slice_idx:04d}.png"
-            cv2.imwrite(str(mask_path), mask)
+            np.save(mask_path, mask)
             
             success_count += 1
             
@@ -275,19 +382,21 @@ def process_annotations(master_csv: Path, dicom_root: Path, out_root: Path, meds
     # Summary
     print(f"\n{'='*60}")
     print(f"GPU {gpu_idx} - MedSAM inference complete!")
-    print(f"Successfully processed: {success_count}/{len(df)} annotations")
+    print(f"Successfully processed: {success_count} new masks")
+    print(f"Skipped (already exist): {skipped_count}")
     print(f"Failed: {failed_count} annotations")
+    print(f"Total annotations: {len(df)}")
     print(f"Output directory: {out_root}")
     print(f"{'='*60}\n")
 
 
 def main():
-    parser = argparse.ArgumentParser(description="MedSAM inference for 2D mask generation")
+    parser = argparse.ArgumentParser(description='MedSAM inference for 2D mask generation')
     parser.add_argument(
-        "--master_csv",
+        "--csv_dir",
         type=str,
         required=True,
-        help="Path to master CSV annotation file"
+        help="Directory containing TRAININGDATA.csv and COMPETITIONDATA.csv"
     )
     parser.add_argument(
         "--dicom_root",
@@ -322,29 +431,37 @@ def main():
     
     args = parser.parse_args()
     
-    master_csv = Path(args.master_csv)
+    csv_dir = Path(args.csv_dir)
     dicom_root = Path(args.dicom_root)
     out_root = Path(args.out_root)
     medsam_ckpt = Path(args.medsam_ckpt)
     
-    if not master_csv.exists():
-        raise FileNotFoundError(f"Master CSV not found: {master_csv}")
+    # Check for CSV files
+    train_csv = csv_dir / "TRAININGDATA.csv"
+    comp_csv = csv_dir / "COMPETITIONDATA.csv"
+    
+    if not train_csv.exists():
+        raise FileNotFoundError(f"TRAININGDATA.csv not found: {train_csv}")
+    if not comp_csv.exists():
+        raise FileNotFoundError(f"COMPETITIONDATA.csv not found: {comp_csv}")
     if not dicom_root.exists():
         raise FileNotFoundError(f"DICOM root not found: {dicom_root}")
     if not medsam_ckpt.exists():
         raise FileNotFoundError(f"MedSAM checkpoint not found: {medsam_ckpt}")
     
-    # Set device
-    device = f'cuda:{args.gpu_idx}' if torch.cuda.is_available() else 'cpu'
+    # FIX BUG #3: Set device to cuda:0 (CUDA_VISIBLE_DEVICES handles GPU selection)
+    device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
     
     print(f"Starting MedSAM inference...")
-    print(f"Annotations: {master_csv}")
+    print(f"Merging annotations from:")
+    print(f"  - {train_csv}")
+    print(f"  - {comp_csv}")
     print(f"DICOM root: {dicom_root}")
     print(f"MedSAM checkpoint: {medsam_ckpt}")
     print(f"Output: {out_root}")
     print(f"Device: {device}\n")
     
-    process_annotations(master_csv, dicom_root, out_root, medsam_ckpt, args.gpu_idx, args.num_gpus, device)
+    process_annotations(csv_dir, dicom_root, out_root, medsam_ckpt, args.gpu_idx, args.num_gpus, device)
 
 
 if __name__ == "__main__":

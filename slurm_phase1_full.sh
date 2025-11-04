@@ -1,13 +1,14 @@
 #!/bin/bash
 #SBATCH --job-name=Phase1_DataPrep
-#SBATCH --output=logs/phase1_%j.out
-#SBATCH --error=logs/phase1_%j.err
+#SBATCH --output=./logs/%x_%j.out
+#SBATCH --error=./logs/%x_%j.err
 #SBATCH --partition=mesh
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=64        # Use 64 CPU cores for parallel processing
 #SBATCH --mem=100G                # Request 100GB RAM
-#SBATCH --time=02:00:00           # 2 hours should be sufficient
+#SBATCH --time=02:30:00           # 2.5 hours to ensure completion
+#SBATCH --oversubscribe
 
 echo "=========================================="
 echo "Phase 1: Full Data Processing Pipeline"

@@ -118,6 +118,12 @@ def aggregate_all_masks(masks2d_root: Path, nifti_dir: Path, out_dir: Path):
     for nifti_path in tqdm(nifti_files, desc="Aggregating masks"):
         case_id = nifti_path.stem.replace('.nii', '')  # Remove .nii.gz
         
+        # Check if output already exists
+        out_path = out_dir / f"{case_id}.nii.gz"
+        if out_path.exists():
+            success_count += 1
+            continue
+        
         try:
             # Load NIfTI image
             nifti_img = nib.load(str(nifti_path))
@@ -133,7 +139,6 @@ def aggregate_all_masks(masks2d_root: Path, nifti_dir: Path, out_dir: Path):
             label_img = aggregate_into_3d(nifti_img, masks_2d, case_id)
             
             # Save label volume
-            out_path = out_dir / f"{case_id}.nii.gz"
             nib.save(label_img, str(out_path))
             
             success_count += 1

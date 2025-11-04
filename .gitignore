@@ -58,12 +58,13 @@ data_processed/yolo_dataset/
 # Uncomment below if CSVs are too large or contain sensitive info
 # data_raw/annotations/*.csv
 
-# Model Weights (Too large for Git)
-models/*.pth
-models/*.pt
-models/*.ckpt
-models/checkpoints/
-models/medsam/
+# Model Weights (Too large for Git - use DVC or Hugging Face instead)
+*.pt
+*.pth
+*.ckpt
+models/
+runs/
+yolo11*.pt
 best_model*.pth
 final_model*.pth
 
