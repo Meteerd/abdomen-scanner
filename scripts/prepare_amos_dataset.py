@@ -46,22 +46,19 @@ def find_case_files(amos_dir: str, case_id: str) -> Dict[str, str]:
     if not case_folder.exists():
         return {'image': None, 'label': None, 'exists': False}
     
-    # Look for NIfTI files (common extensions: .nii, .nii.gz)
-    nifti_files = list(case_folder.glob('*.nii*'))
-    
+    # AMOS dataset structure (after aggregation):
+    # - ct.nii.gz (CT image)
+    # - label.nii.gz (aggregated multi-class label from segmentations/)
     result = {'exists': True, 'image': None, 'label': None}
     
-    # Heuristic: files with 'label' or 'mask' or 'seg' in name are labels
-    for f in nifti_files:
-        fname_lower = f.name.lower()
-        if any(x in fname_lower for x in ['label', 'mask', 'seg', 'gt']):
-            result['label'] = str(f)
-        else:
-            result['image'] = str(f)
+    ct_path = case_folder / 'ct.nii.gz'
+    label_path = case_folder / 'label.nii.gz'
     
-    # If we only found one file, assume it's the image
-    if result['image'] is None and len(nifti_files) == 1:
-        result['image'] = str(nifti_files[0])
+    if ct_path.exists():
+        result['image'] = str(ct_path)
+    
+    if label_path.exists():
+        result['label'] = str(label_path)
     
     return result
 
@@ -99,7 +96,7 @@ def create_splits(meta_df: pd.DataFrame, amos_dir: str, output_dir: str):
             case_info = find_case_files(amos_dir, case_id)
             
             # Check for both image and label (for training/validation)
-            if (split_name in ['training', 'validation'] and 
+            if (split_name in ['train', 'val'] and 
                 case_info['exists'] and 
                 case_info['image'] and 
                 case_info['label']):
@@ -111,7 +108,7 @@ def create_splits(meta_df: pd.DataFrame, amos_dir: str, output_dir: str):
                     "case_id": case_id
                 })
             # Check for image only (for testing)
-            elif (split_name == 'testing' and
+            elif (split_name == 'test' and
                   case_info['exists'] and
                   case_info['image']):
                   

@@ -82,7 +82,7 @@ def get_transforms(config: Dict, mode: str = 'train', use_amos: bool = False):
     if use_amos:
         from transforms_amos import get_amos_train_transforms, get_amos_val_transforms
         if mode == 'train':
-            return get_amos_train_transforms()
+            return get_amos_train_transforms(config)  # FIXED: Pass config
         else:
             return get_amos_val_transforms()
     
@@ -177,11 +177,16 @@ class SegmentationModel(pl.LightningModule):
             print(f"Applying class weights to loss: {class_weights}")
             class_weights = torch.tensor(class_weights, dtype=torch.float)
         
+        # DiceCELoss combines Dice loss and Cross-Entropy loss
+        # weight: class weights for CE loss
+        # lambda_dice and lambda_ce: weighting between Dice and CE components
         self.loss_fn = DiceCELoss(
             to_onehot_y=True,
             softmax=True,
             squared_pred=True,
-            ce_weight=class_weights,
+            weight=class_weights,  # Correct parameter name for class weights
+            lambda_dice=loss_config.get('lambda_dice', 1.0),
+            lambda_ce=loss_config.get('lambda_ce', 1.0),
         )
         
         # Metrics
@@ -255,8 +260,8 @@ class SegmentationModel(pl.LightningModule):
     
     def configure_optimizers(self):
         optimizer_config = self.config.get('optimizer', {})
-        lr = optimizer_config.get('lr', 2e-4)
-        weight_decay = optimizer_config.get('weight_decay', 1e-5)
+        lr = float(optimizer_config.get('lr', 2e-4))
+        weight_decay = float(optimizer_config.get('weight_decay', 1e-5))
         
         optimizer = torch.optim.AdamW(
             self.parameters(),

@@ -1,3 +1,10 @@
+# ============================================================================
+# Abdomen Scanner - .gitignore
+# ============================================================================
+# Purpose: Exclude large data files, models, logs, and sensitive information
+#          from version control. Keep only source code and documentation.
+# ============================================================================
+
 # Python
 __pycache__/
 *.py[cod]
@@ -19,14 +26,16 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
+pip-log.txt
+pip-delete-this-directory.txt
 
 # Virtual Environments
 venv/
 env/
 ENV/
 .venv/
+virtualenv/
 
-data/
 # Conda
 .conda/
 anaconda3/
@@ -42,59 +51,142 @@ miniconda3/
 *.swp
 *.swo
 *~
+.spyderproject
+.spyproject
+.ropeproject
 
-# Data Files (CRITICAL - Don't upload patient data!)
-data_raw/dicom_files/
-data_processed/nifti_images/
-data_processed/nifti_labels_boxy/
-data_processed/nifti_labels_medsam/
-data_processed/medsam_2d_masks/
-data_processed/yolo_dataset/
+# ============================================================================
+# DATA FILES - CRITICAL: DO NOT COMMIT PATIENT DATA
+# ============================================================================
+
+# Raw DICOM data
+data/
+data_raw/
+data_processed/
+data_processed_BACKUP*/
+
+# Medical imaging files
 *.dcm
 *.nii
 *.nii.gz
 
-# Keep CSV annotations (small files, needed for development)
-# Uncomment below if CSVs are too large or contain sensitive info
-# data_raw/annotations/*.csv
+# AMOS dataset
+data/AbdomenDataSet/
 
-# Model Weights (Too large for Git - use DVC or Hugging Face instead)
+# Keep only metadata CSVs and annotations (small files)
+!data/meta.csv
+
+# ============================================================================
+# MODEL WEIGHTS & CHECKPOINTS
+# ============================================================================
+# These are too large for Git. Use Git LFS, DVC, or Hugging Face Hub instead
+
+# PyTorch models
 *.pt
 *.pth
 *.ckpt
-models/
-runs/
-yolo11*.pt
-best_model*.pth
-final_model*.pth
+*.safetensors
 
-# Logs
+# YOLO weights
+yolo*.pt
+best*.pt
+last*.pt
+
+# Model directories
+models/
+checkpoints/
+pretrained/
+weights/
+
+# MLflow & experiment tracking
+runs/
+mlruns/
+mlflow/
+
+# ============================================================================
+# LOGS & OUTPUTS
+# ============================================================================
+
+# SLURM logs
 logs/
 *.log
 *.out
 *.err
 slurm-*.out
+slurm-*.err
+
+# TensorBoard
 tensorboard/
+tb_logs/
 
-# System Files
-.DS_Store
-Thumbs.db
+# Wandb
+wandb/
+
+# ============================================================================
+# TEMPORARY FILES & BACKUPS
+# ============================================================================
+
+# Temp directories
+Temp/
+temp/
+tmp/
+scratch/
+cache/
+
+# Backup files
 *.bak
+*.backup
+*.BACKUP*
+*~
 
-# Temporary Files
+# Temporary files
 *.tmp
 *.temp
-scratch/
-temp/
+*.swp
+*.swo
 
-# Secrets & Credentials
+# ============================================================================
+# SYSTEM FILES
+# ============================================================================
+
+.DS_Store
+Thumbs.db
+desktop.ini
+*.lnk
+
+# ============================================================================
+# SECRETS & CREDENTIALS
+# ============================================================================
+
 .env
+.env.local
+.env.*.local
 *.pem
 *.key
-config/secrets.yaml
+*.cert
+secrets.yaml
 credentials/
+config/secrets.yaml
 
-# Large Files (Git LFS candidates)
+# Wandb API key
+.wandb_api_key
+
+# ============================================================================
+# SPLIT FILES (Optional - uncomment if splits are regenerated)
+# ============================================================================
+# splits/*.txt
+
+# ============================================================================
+# DOCUMENTATION TO KEEP
+# ============================================================================
+# Keep these lightweight documentation files:
+# - README.md
+# - requirements.txt
+# - configs/*.yaml
+# - scripts/*.py
+# - slurm_*.sh
+# - docs/*.md
+# ============================================================================
 *.zip
 *.tar.gz
 *.h5

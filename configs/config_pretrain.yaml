@@ -62,13 +62,10 @@ model:
   strides: [2, 2, 2, 2]
   dropout: 0.1
 
-# Pre-processing
-preproc:
-  target_spacing: [1.5, 1.5, 2.0]
-  intensity_clip: [0.5, 99.5]
-  hu_window: [-175, 250]
-
 # Data augmentation (standard for pre-training)
+# NOTE: Preprocessing (HU clipping, normalization, spacing) is hardcoded in
+#       scripts/transforms_amos.py based on AMOS paper specifications.
+#       These values control augmentation only.
 aug:
   patch_size: [192, 192, 160]
   pos_neg_ratio: 3.0

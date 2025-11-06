@@ -62,6 +62,9 @@ echo "  - COMPETITIONDATA.csv (14,315 annotations)"
 echo "  - Total: 42,450 annotations"
 echo ""
 
+# DICOM root directory for instance number mapping
+DICOM_ROOT="data/AbdomenDataSet"
+
 # Step 1: Run MedSAM inference on GPU 0 and GPU 1 in parallel
 echo "=========================================="
 echo "Step 1: Running MedSAM Inference (Parallel)"
@@ -72,7 +75,7 @@ echo "Launching 2 parallel processes (one per GPU)..."
 echo "Starting GPU 0 process..."
 CUDA_VISIBLE_DEVICES=0 python scripts/medsam_infer.py \
     --csv_dir "$CSV_DIR" \
-    --dicom_root data_raw/dicom_files \
+    --dicom_root data/AbdomenDataSet \
     --out_root data_processed/medsam_2d_masks \
     --medsam_ckpt "$MEDSAM_CKPT" \
     --gpu_idx 0 \
@@ -86,7 +89,7 @@ echo "GPU 0 process started with PID: $PID_GPU0"
 echo "Starting GPU 1 process..."
 CUDA_VISIBLE_DEVICES=1 python scripts/medsam_infer.py \
     --csv_dir "$CSV_DIR" \
-    --dicom_root data_raw/dicom_files \
+    --dicom_root data/AbdomenDataSet \
     --out_root data_processed/medsam_2d_masks \
     --medsam_ckpt "$MEDSAM_CKPT" \
     --gpu_idx 1 \
@@ -131,6 +134,7 @@ echo "=========================================="
 python scripts/aggregate_masks.py \
     --masks2d_root data_processed/medsam_2d_masks \
     --nifti_dir data_processed/nifti_images \
+    --dicom_root "$DICOM_ROOT" \
     --out_dir data_processed/nifti_labels_medsam
 
 if [ $? -ne 0 ]; then

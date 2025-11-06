@@ -7,7 +7,7 @@
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=64        # Use 64 CPU cores for parallel processing
 #SBATCH --mem=100G                # Request 100GB RAM
-#SBATCH --time=02:30:00           # 2.5 hours to ensure completion
+#SBATCH --time=04:00:00           # 4 hours (increased for full 1,092 cases + boxy labels)
 #SBATCH --oversubscribe
 
 echo "=========================================="
@@ -33,12 +33,15 @@ echo "Python: $(which python)"
 echo "Python version: $(python --version)"
 echo ""
 
-# Step 1: Convert DICOM to NIfTI
+# Step 1: Convert DICOM to NIfTI (BOTH Training and Competition datasets)
 echo "=========================================="
 echo "Step 1: Converting DICOM to NIfTI"
 echo "=========================================="
+echo "CRITICAL FIX: Processing BOTH Training-DataSets AND Competition-DataSets"
+echo "These are DIFFERENT scans with the same case numbers!"
+echo ""
 python scripts/dicom_to_nifti.py \
-    --dicom_root data/AbdomenDataSet/Training-DataSets \
+    --dicom_root data/AbdomenDataSet \
     --out_dir data_processed/nifti_images
 
 if [ $? -ne 0 ]; then

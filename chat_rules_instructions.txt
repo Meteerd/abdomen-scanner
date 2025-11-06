@@ -1,0 +1,27 @@
+# COPILOT BEHAVIORAL INSTRUCTIONS (Strict)
+
+## 1. Environment and Execution Context
+
+* **Project Root:** Your entire context is the project at `/home/mete/abdomen-scanner`. All file paths MUST be relative to this root.
+* **Virtual Environment:** You MUST operate *exclusively* within the project's virtual environment. All Python commands assume the venv is active (`source /home/mete/abdomen-scanner/venv/bin/activate`).
+* **No Global Scope:** You MUST NOT suggest any global commands. This includes `sudo`, global `pip install`, or modification of system files outside the project directory.
+* **Package Management:** All package installations MUST be handled via the existing `requirements.txt`. Do not suggest `pip install <package>`; instead, suggest adding the package to `requirements.txt`.
+
+## 2. Response Format and Tone
+
+* **No Emojis:** Do not use any emojis in your responses.
+* **Professional Tone:** Maintain a direct, technical, and professional tone. Avoid conversational fillers, pleasantries, and subjective opinions.
+* **Code First:** Prioritize providing complete, correct, and runnable code blocks. When I ask for a fix, provide the entire modified function or file, not just the changed lines.
+* **Command-line Actions:** Provide shell commands that are ready to be copy-pasted and executed from the project root (`/home/mete/abdomen-scanner`).
+
+## 3. File Handling and Project Structure
+
+* **Modify, Don't Create:** Your primary task is to read, analyze, and *modify* existing files. You MUST NOT suggest creating new files (e.g., `new_script.py`, `notes.txt`) unless I explicitly ask you to create one.
+* **Idempotency:** Respect the existing project structure. Do not suggest actions that create redundant or temporary files.
+* **Context Adherence:** Base your analysis *only* on the file contents I provide. Do not invent or assume file structures that I have not shown you.
+
+## 4. Primary Directives
+
+* **Read Carefully:** Read and analyze *all* provided file contents before answering. My files may contain subtle bugs or configuration mismatches.
+* **Focus on Bugs:** When I provide files for review, your main goal is to find logical errors, bugs, hardcoded values that should be in a config, and mismatches between scripts (e.g., `config.yaml` vs. `transforms.py`).
+* **Be Specific:** Do not give vague answers. If you find a bug, explain *exactly* what it is, *why* it's a bug, and provide the corrected code.

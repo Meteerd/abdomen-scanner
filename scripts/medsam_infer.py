@@ -5,6 +5,7 @@ Purpose:
 - For each bbox annotation in CSV files, run MedSAM on the 2D DICOM/NIfTI slice to create a binary mask.
 - Merges TRAININGDATA.csv and COMPETITIONDATA.csv to process all 42,450 annotations.
 - Supports parallel execution across multiple GPUs.
+- CRITICAL: Saves masks by class to avoid overwriting multi-pathology slices.
 
 Usage:
     # Single GPU
@@ -26,6 +27,32 @@ from tqdm import tqdm
 import pydicom
 import nibabel as nib
 from PIL import Image
+
+# 11→6 Class Mapping (from prep_yolo_data.py)
+CLASS_MAPPING = {
+    # Class 0: AAA/AAD
+    'Abdominal aortic aneurysm': 0,
+    'Abdominal aortic dissection': 0,
+    'Abdominal Aorta': 0,  # Added
+    
+    # Class 1: Acute Pancreatitis
+    'Compatible with acute pancreatitis': 1,
+    
+    # Class 2: Cholecystitis
+    'Compatible with acute cholecystitis': 2,
+    'Gallbladder stone': 2,
+    
+    # Class 3: Kidney/Ureteral Stones
+    'Kidney stone': 3,
+    'ureteral stone': 3,
+    
+    # Class 4: Diverticulitis (RARE)
+    'Compatible with acute diverticulitis': 4,
+    'Calcified diverticulum': 4,
+    
+    # Class 5: Appendicitis (RARE)
+    'Compatible with acute appendicitis': 5,
+}
 
 # MedSAM imports (requires medsam package installed)
 try:
@@ -86,7 +113,9 @@ def preprocess_image(image: np.ndarray, transform: object, device: str) -> torch
     
     # Apply transform
     image_transformed = transform.apply_image(image)
-    image_tensor = torch.as_tensor(image_transformed, device=device)
+    
+    # Convert to float32 tensor (CRITICAL: MedSAM requires float32, not uint8)
+    image_tensor = torch.as_tensor(image_transformed, dtype=torch.float32, device=device)
     image_tensor = image_tensor.permute(2, 0, 1).contiguous()[None, :, :, :]  # (1, 3, H, W)
     
     return image_tensor
@@ -183,45 +212,64 @@ def parse_bbox_data(data_str: str) -> Tuple[int, int, int, int]:
     return xmin, ymin, xmax, ymax
 
 
-def build_dicom_manifest(dicom_root: Path) -> Dict[Tuple[int, int], Path]:
+def build_dicom_manifest(dicom_root: Path) -> Dict[Tuple[int, int, str], Path]:
     """
-    Build a manifest mapping (Case Number, Image Id) to DICOM file path.
+    Build a manifest mapping (Case Number, Image Id, Dataset) to DICOM file path.
     
-    The Image Id corresponds to the DICOM InstanceNumber tag,
-    NOT the filename (e.g., filename "100007.dcm" may have InstanceNumber=77).
+    CRITICAL FIX: Training and Competition datasets contain DIFFERENT scans for the same case numbers.
+    This function now properly tracks which dataset each Image ID belongs to.
+    
+    The Image Id in the CSV corresponds to the FILENAME (e.g., "100007"),
+    NOT the DICOM InstanceNumber tag!
     
     Returns:
-        Dictionary mapping (case_number, image_id) to file path
+        Dictionary mapping (case_number, image_id_from_filename, dataset) to file path
     """
     print(f"Building DICOM manifest from {dicom_root}...")
     manifest = {}
     
-    # Find all case directories
-    case_dirs = [d for d in dicom_root.iterdir() if d.is_dir()]
-    
-    for case_dir in tqdm(case_dirs, desc="Scanning DICOM directories"):
-        # Extract case number from directory name
-        try:
-            case_number = int(''.join(filter(str.isdigit, case_dir.name)))
-        except ValueError:
-            continue
+    # Process Training-DataSets
+    train_root = dicom_root / 'Training-DataSets'
+    if train_root.exists():
+        train_cases = [d for d in train_root.iterdir() if d.is_dir()]
+        print(f"  Found {len(train_cases)} cases in Training-DataSets")
         
-        # Scan all DICOM files in this case
-        for dcm_file in case_dir.glob("*.dcm"):
+        for case_dir in tqdm(train_cases, desc="Scanning Training-DataSets"):
             try:
-                # Read DICOM header only (fast - doesn't load pixel data)
-                dcm = pydicom.dcmread(str(dcm_file), stop_before_pixels=True)
-                
-                # Use InstanceNumber tag as Image Id (what CSV references)
-                image_id = int(dcm.InstanceNumber)
-                
-                # Store mapping
-                manifest[(case_number, image_id)] = dcm_file
-                
-            except Exception as e:
+                case_number = int(''.join(filter(str.isdigit, case_dir.name)))
+            except ValueError:
                 continue
+            
+            for dcm_file in case_dir.glob("*.dcm"):
+                try:
+                    image_id = int(dcm_file.stem)
+                    manifest[(case_number, image_id, 'Training-DataSets')] = dcm_file
+                except Exception:
+                    continue
     
-    print(f"Found {len(manifest)} DICOM files across {len(case_dirs)} cases")
+    # Process Competition-DataSets
+    comp_root = dicom_root / 'Competition-DataSets'
+    if comp_root.exists():
+        comp_cases = [d for d in comp_root.iterdir() if d.is_dir()]
+        print(f"  Found {len(comp_cases)} cases in Competition-DataSets")
+        
+        for case_dir in tqdm(comp_cases, desc="Scanning Competition-DataSets"):
+            try:
+                case_number = int(''.join(filter(str.isdigit, case_dir.name)))
+            except ValueError:
+                continue
+            
+            for dcm_file in case_dir.glob("*.dcm"):
+                try:
+                    image_id = int(dcm_file.stem)
+                    manifest[(case_number, image_id, 'Competition-DataSets')] = dcm_file
+                except Exception:
+                    continue
+    
+    print(f"Found {len(manifest)} DICOM files total")
+    print(f"  Training: {len([k for k in manifest.keys() if k[2] == 'Training-DataSets'])} files")
+    print(f"  Competition: {len([k for k in manifest.keys() if k[2] == 'Competition-DataSets'])} files")
+    
     return manifest
 
 
@@ -293,6 +341,11 @@ def process_annotations(
     
     train_df = pd.read_csv(train_csv)
     comp_df = pd.read_csv(comp_csv)
+    
+    # Mark which dataset each annotation belongs to
+    train_df['dataset'] = 'Training-DataSets'
+    comp_df['dataset'] = 'Competition-DataSets'
+    
     df = pd.concat([train_df, comp_df], ignore_index=True)
     
     print(f"Merged {len(train_df)} training + {len(comp_df)} competition = {len(df)} total annotations")
@@ -333,21 +386,34 @@ def process_annotations(
             # FIX BUG #1: Use correct CSV column names
             case_number = int(row['Case Number'])
             image_id = int(row['Image Id'])
+            class_name = row['Class']
+            
+            # Get class ID from mapping
+            class_id = CLASS_MAPPING.get(class_name)
+            if class_id is None:
+                # Unknown class - skip
+                failed_count += 1
+                continue
             
             # Parse bounding box from Data column
             data_str = row['Data']
             x_min, y_min, x_max, y_max = parse_bbox_data(data_str)
             
-            # Check if mask already exists
-            case_out_dir = out_root / f"case_{case_number}"
-            mask_path = case_out_dir / f"image_{image_id}_mask.npy"
+            # CRITICAL FIX: Include dataset prefix AND class_id in directory/filename
+            # Training and Competition are DIFFERENT scans, need separate directories
+            dataset = row['dataset']
+            dataset_prefix = 'TRAIN' if dataset == 'Training-DataSets' else 'COMP'
+            case_out_dir = out_root / f"{dataset_prefix}_case_{case_number}"
+            mask_path = case_out_dir / f"image_{image_id}_class_{class_id}_mask.npy"
             
             if mask_path.exists():
                 skipped_count += 1
                 continue
             
-            # FIX BUG #2: Load DICOM using manifest
-            dicom_key = (case_number, image_id)
+            # FIX: Load DICOM using manifest with dataset info
+            dicom_key = (case_number, image_id, dataset)
+            
+            # Look up DICOM file by (case, image, dataset)
             if dicom_key not in dicom_manifest:
                 failed_count += 1
                 continue
@@ -375,7 +441,8 @@ def process_annotations(
             success_count += 1
             
         except Exception as e:
-            print(f"Error processing row {idx}: {e}")
+            # Only print errors for debugging (comment out for production to reduce log size)
+            # print(f"Error processing row {idx}: {e}")
             failed_count += 1
             continue
     

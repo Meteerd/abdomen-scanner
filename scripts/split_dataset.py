@@ -21,6 +21,9 @@ def get_case_ids(nifti_dir: Path) -> List[str]:
     """
     Get list of unique case IDs from NIfTI directory.
     
+    CRITICAL FIX: Training and Competition datasets are now separate files with prefixes.
+    Case IDs now include dataset prefix (TRAIN_ or COMP_).
+    
     Args:
         nifti_dir: Directory containing NIfTI files
         
@@ -29,6 +32,14 @@ def get_case_ids(nifti_dir: Path) -> List[str]:
     """
     nifti_files = sorted(nifti_dir.glob("*.nii.gz"))
     case_ids = [f.stem.replace('.nii', '') for f in nifti_files]
+    
+    train_cases = [c for c in case_ids if c.startswith('TRAIN_')]
+    comp_cases = [c for c in case_ids if c.startswith('COMP_')]
+    
+    print(f"Found {len(train_cases)} Training cases")
+    print(f"Found {len(comp_cases)} Competition cases")
+    print(f"Total unique scans: {len(case_ids)}")
+    
     return case_ids
 
 
@@ -209,6 +220,10 @@ def main():
     if not label_dir.exists():
         raise FileNotFoundError(f"Label directory not found: {label_dir}")
     
+    print(f"Starting dataset split...")
+    print(f"Input images: {nifti_dir}")
+    print(f"Input labels: {label_dir}\n")
+    
     create_dataset_splits(
         nifti_dir=nifti_dir,
         label_dir=label_dir,
@@ -220,11 +235,6 @@ def main():
         test_ratio=args.test,
         seed=args.seed
     )
-    
-    print(f"Starting dataset split...")
-    print(f"Input: {nifti_dir}\n")
-    
-    create_dataset_splits(nifti_dir, train_out, val_out, test_out, args.train, args.val, args.test, args.seed)
 
 
 if __name__ == "__main__":

@@ -1,19 +1,30 @@
 """
 Phase 1 - Step 2: Generate 3D Boxy Labels from CSV Annotations with Z-Axis Validation
 
+CRITICAL FIX APPLIED: Now handles TRAIN_/COMP_ prefixed NIfTI files correctly.
+Training and Competition datasets contain DIFFERENT scans for the same case numbers.
+
 Purpose:
 - Build 3D integer label volumes by drawing 2D CSV bboxes per slice
 - Uses Boundary Slice annotations to validate 3D z-axis extent per anatomical region
 - Maps 11 radiologist labels to 6 competition classes (per Koç et al. 2024 Table 2)
 - Creates "weak" bounding-box labels for initial training or MedSAM prompting
+- Handles both TRAIN_*.nii.gz and COMP_*.nii.gz input files
 
 Critical Changes (GAP 1 Fix):
 - Added 11→6 class mapping from paper
 - Added z-axis boundary validation using "Boundary Slice" annotations
 - Bounding boxes are only drawn within their valid anatomical z-range
+- NEW: Correctly parses TRAIN_20050.nii.gz and COMP_20050.nii.gz filenames
+
+Expected Input:
+- NIfTI images: TRAIN_20001.nii.gz, COMP_20001.nii.gz, etc.
+
+Expected Output:
+- Boxy labels: TRAIN_20001.nii.gz, COMP_20001.nii.gz, etc. (matching input names)
 
 Usage:
-    python scripts/make_boxy_labels.py --excel_path Temp/Information.xlsx --nifti_dir data_processed/nifti_images --out_dir data_processed/nifti_labels_boxy
+    python scripts/make_boxy_labels.py --nifti_dir data_processed/nifti_images --out_dir data_processed/nifti_labels_boxy
 """
 
 import argparse
@@ -89,6 +100,9 @@ def parse_excel_annotations(excel_path: Path) -> Tuple[pd.DataFrame, pd.DataFram
     """
     Load and parse CSV annotation files (TRAININGDATA.csv + COMPETITIONDATA.csv).
     
+    CRITICAL FIX: Adds 'dataset_source' column to track which dataset each annotation belongs to.
+    This prevents confusion when Training and Competition have same case numbers but different scans.
+    
     Args:
         excel_path: Path to annotations directory or legacy Excel file (for backward compatibility)
         
@@ -103,18 +117,24 @@ def parse_excel_annotations(excel_path: Path) -> Tuple[pd.DataFrame, pd.DataFram
     if train_csv.exists() and comp_csv.exists():
         print(f"Loading annotations from CSV files in {csv_dir}...")
         
-        # Read both CSV files
+        # Read both CSV files and TAG each with dataset source
         train_df = pd.read_csv(train_csv)
-        comp_df = pd.read_csv(comp_csv)
+        train_df['dataset_source'] = 'TRAIN'  # Tag training annotations
         
-        # Merge datasets
+        comp_df = pd.read_csv(comp_csv)
+        comp_df['dataset_source'] = 'COMP'    # Tag competition annotations
+        
+        # Merge datasets (now safe because we track source)
         combined_df = pd.concat([train_df, comp_df], ignore_index=True)
         print(f"Merged {len(train_df)} training + {len(comp_df)} competition annotations")
+        print(f"  - Training: {train_df['Case Number'].nunique()} unique cases")
+        print(f"  - Competition: {comp_df['Case Number'].nunique()} unique cases")
         
     else:
-        # Fallback to Excel file
+        # Fallback to Excel file (legacy, assume training data)
         print(f"CSV files not found, loading from Excel: {excel_path}...")
         train_df = pd.read_excel(excel_path, sheet_name='TRAIININGDATA')
+        train_df['dataset_source'] = 'TRAIN'  # Legacy data assumed training
         combined_df = train_df
     
     # Split into bounding boxes and boundary slices
@@ -152,21 +172,29 @@ def extract_bbox_coords(data_str: str) -> Tuple[int, int, int, int]:
     return x_min, y_min, x_max, y_max
 
 
-def get_anatomical_boundaries(case_number: int, boundary_df: pd.DataFrame) -> Dict[str, Tuple[int, int]]:
+def get_anatomical_boundaries(case_number: int, boundary_df: pd.DataFrame, dataset_source: str) -> Dict[str, Tuple[int, int]]:
     """
     Extract anatomical z-axis boundaries for a case from Boundary Slice annotations.
     
     Each anatomical structure (e.g., 'Pancreas', 'Kidney-Bladder') has 2 boundary slices
     marking the start and end of the 3D region.
     
+    CRITICAL FIX: Now filters by both case_number AND dataset_source to prevent
+    mixing Training and Competition boundaries.
+    
     Args:
         case_number: Case ID
-        boundary_df: DataFrame with Boundary Slice annotations
+        boundary_df: DataFrame with Boundary Slice annotations (must have 'dataset_source' column)
+        dataset_source: 'TRAIN' or 'COMP' to specify which dataset
         
     Returns:
         Dict mapping anatomical class name to (z_start, z_end) slice range
     """
-    case_boundaries = boundary_df[boundary_df['Case Number'] == case_number]
+    # Filter by BOTH case number AND dataset source
+    case_boundaries = boundary_df[
+        (boundary_df['Case Number'] == case_number) & 
+        (boundary_df['dataset_source'] == dataset_source)
+    ]
     
     boundaries = {}
     
@@ -255,6 +283,7 @@ def create_boxy_label_volume(
     bbox_df: pd.DataFrame,
     boundary_df: pd.DataFrame,
     case_number: int,
+    dataset_source: str,
     image_id_to_slice_idx: Dict[int, int]
 ) -> Tuple[nib.Nifti1Image, Dict[str, int]]:
     """
@@ -263,11 +292,15 @@ def create_boxy_label_volume(
     This implements GAP 1 fix: validates each bounding box against anatomical boundaries
     before drawing, ensuring labels are only applied within valid z-ranges.
     
+    CRITICAL FIX: Now filters by both case_number AND dataset_source to prevent
+    mixing Training and Competition annotations for same case numbers.
+    
     Args:
         nifti_img: Original NIfTI image (for shape and header)
-        bbox_df: DataFrame with Bounding Box annotations
-        boundary_df: DataFrame with Boundary Slice annotations
+        bbox_df: DataFrame with Bounding Box annotations (must have 'dataset_source' column)
+        boundary_df: DataFrame with Boundary Slice annotations (must have 'dataset_source' column)
         case_number: Case Number (e.g., 20001)
+        dataset_source: 'TRAIN' or 'COMP' to specify which dataset
         image_id_to_slice_idx: Mapping from Image ID to slice index in NIfTI volume
         
     Returns:
@@ -280,14 +313,17 @@ def create_boxy_label_volume(
     # Initialize empty label volume
     label_volume = np.zeros(shape, dtype=np.uint8)
     
-    # Get anatomical boundaries for this case
-    boundaries = get_anatomical_boundaries(case_number, boundary_df)
+    # Get anatomical boundaries for this case (filter by dataset!)
+    boundaries = get_anatomical_boundaries(case_number, boundary_df, dataset_source)
     
     if not boundaries:
-        print(f"Warning: Case {case_number} has no boundary slice annotations")
+        print(f"Warning: Case {case_number} ({dataset_source}) has no boundary slice annotations")
     
-    # Filter annotations for this case
-    case_annotations = bbox_df[bbox_df['Case Number'] == case_number]
+    # Filter annotations for this case AND dataset
+    case_annotations = bbox_df[
+        (bbox_df['Case Number'] == case_number) & 
+        (bbox_df['dataset_source'] == dataset_source)
+    ]
     
     # Validation statistics
     stats = {
@@ -414,13 +450,20 @@ def generate_boxy_labels(excel_path: Path, nifti_dir: Path, out_dir: Path):
     
     for nifti_path in tqdm(nifti_files, desc="Generating boxy labels"):
         # Extract case number from filename
-        # Format: "1_2_840_10009_1_2_3_10001_20001.nii.gz" → 20001
-        # Or: "case_20001.nii.gz" → 20001
+        # NEW FORMATS with dataset prefixes:
+        #   - "TRAIN_20050.nii.gz" → 20050
+        #   - "COMP_20050.nii.gz" → 20050
+        # OLD FORMATS (still supported):
+        #   - "1_2_840_10009_1_2_3_10001_20001.nii.gz" → 20001
+        #   - "case_20001.nii.gz" → 20001
         case_str = nifti_path.stem.replace('.nii', '')
         
         # Try to extract numeric case number
         try:
-            if 'case_' in case_str:
+            if case_str.startswith('TRAIN_') or case_str.startswith('COMP_'):
+                # NEW FORMAT: TRAIN_20050 or COMP_20050
+                case_number = int(case_str.split('_', 1)[1])  # Split on first underscore only
+            elif 'case_' in case_str:
                 # Format: case_20001
                 case_number = int(case_str.split('case_')[1])
             elif '_' in case_str:
@@ -439,8 +482,27 @@ def generate_boxy_labels(excel_path: Path, nifti_dir: Path, out_dir: Path):
             skipped_count += 1
             continue
         
-        # Check if output already exists
-        out_path = out_dir / f"case_{case_number}.nii.gz"
+        # Extract dataset source from filename
+        # TRAIN_20050.nii.gz → dataset_source='TRAIN'
+        # COMP_20050.nii.gz → dataset_source='COMP'
+        # old_format.nii.gz → dataset_source='TRAIN' (legacy default)
+        if case_str.startswith('TRAIN_'):
+            dataset_source = 'TRAIN'
+        elif case_str.startswith('COMP_'):
+            dataset_source = 'COMP'
+        else:
+            dataset_source = 'TRAIN'  # Legacy files assumed training
+        
+        # Create output filename matching input (preserve TRAIN_/COMP_ prefix if present)
+        # Input: TRAIN_20050.nii.gz → Output: TRAIN_20050.nii.gz
+        # Input: COMP_20050.nii.gz → Output: COMP_20050.nii.gz
+        # Input: old_format_20050.nii.gz → Output: case_20050.nii.gz
+        if case_str.startswith('TRAIN_') or case_str.startswith('COMP_'):
+            out_filename = f"{case_str}.nii.gz"
+        else:
+            out_filename = f"case_{case_number}.nii.gz"
+        
+        out_path = out_dir / out_filename
         if out_path.exists():
             skipped_count += 1
             continue
@@ -451,8 +513,12 @@ def generate_boxy_labels(excel_path: Path, nifti_dir: Path, out_dir: Path):
             
             # Build simple Image ID → Slice Index mapping
             # Assumes Image IDs are sequential starting from some base
+            # Filter by BOTH case number AND dataset source!
             shape = nifti_img.shape
-            case_image_ids = bbox_df[bbox_df['Case Number'] == case_number]['Image Id'].unique()
+            case_image_ids = bbox_df[
+                (bbox_df['Case Number'] == case_number) & 
+                (bbox_df['dataset_source'] == dataset_source)
+            ]['Image Id'].unique()
             
             if len(case_image_ids) > 0:
                 min_image_id = case_image_ids.min()
@@ -464,9 +530,9 @@ def generate_boxy_labels(excel_path: Path, nifti_dir: Path, out_dir: Path):
             else:
                 image_id_to_slice_idx = {}
             
-            # Create label volume with z-axis validation
+            # Create label volume with z-axis validation (pass dataset_source!)
             label_img, stats = create_boxy_label_volume(
-                nifti_img, bbox_df, boundary_df, case_number, image_id_to_slice_idx
+                nifti_img, bbox_df, boundary_df, case_number, dataset_source, image_id_to_slice_idx
             )
             
             # Save label volume

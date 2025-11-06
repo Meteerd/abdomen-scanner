@@ -7,6 +7,29 @@ Automated 3D segmentation of critical abdominal emergencies from CT scans using 
 
 ---
 
+## 🚨 CRITICAL: Dataset Structure (READ FIRST)
+
+**Training and Competition datasets contain COMPLETELY DIFFERENT CT scans despite sharing case numbers!**
+
+- **Training-DataSets/case_20001** = Patient A (e.g., ureteral stone, 224 slices)
+- **Competition-DataSets/case_20001** = Patient B (e.g., appendicitis, 404 slices)
+
+**These are NOT the same patient!** Same case numbers, different scans, different pathologies.
+
+**Solution:** All pipeline phases use TRAIN_/COMP_ prefixes to keep datasets separate:
+- `TRAIN_20001.nii.gz` → Annotations from TRAININGDATA.csv
+- `COMP_20001.nii.gz` → Annotations from COMPETITIONDATA.csv
+
+**Expected Dataset Sizes:**
+- Training-DataSets: 735 cases (case_20001 through case_20736, not all numbers exist)
+- Competition-DataSets: 357 cases (case_20001 through case_20359)
+- **Total: 1,092 unique CT scans** (NOT 735!)
+- 356 case numbers overlap but contain different scans
+
+See `data_raw/annotations/README.md` for complete data mapping documentation.
+
+---
+
 ## Quick Start
 
 **Essential Files:**
@@ -15,17 +38,27 @@ Automated 3D segmentation of critical abdominal emergencies from CT scans using 
 
 **Complete workflow:**
 ```bash
-# Phase 1: Data prep (2h)
+# Phase 1: DICOM → NIfTI conversion (2h, creates 1,092 files)
 sbatch slurm_phase1_full.sh
+# Output: data_processed/nifti_images/
+#   - TRAIN_20001.nii.gz, TRAIN_20002.nii.gz, ... (735 files)
+#   - COMP_20001.nii.gz, COMP_20002.nii.gz, ... (357 files)
 
 # Phase 1.5: YOLO validation (8h)
 sbatch slurm_phase1.5_yolo.sh
 
-# Phase 2: MedSAM masks (12h)
+# Phase 2: MedSAM pseudo-mask generation (12h)
 sbatch slurm_phase2_medsam.sh
+# Output: data_processed/medsam_2d_masks/
+#   - TRAIN_case_20001/, TRAIN_case_20002/, ... (2D masks per case)
+#   - COMP_case_20001/, COMP_case_20002/, ...
+# Output: data_processed/nifti_labels_medsam/
+#   - TRAIN_20001.nii.gz, COMP_20001.nii.gz, ... (3D aggregated labels)
 
 # Phase 2.5: Create 3D training splits (5min)
 sbatch slurm_phase2.5_splits.sh
+# Output: splits/train_cases.txt, val_cases.txt, test_cases.txt
+#   (contains both TRAIN_* and COMP_* case IDs)
 
 # Phase 2.6: Manual QC (30min)
 python scripts/sample_rare_classes.py
@@ -33,7 +66,7 @@ python scripts/sample_rare_classes.py
 # Phase 3.A: AMOS pre-training (3d)
 sbatch slurm_phase3a_pretrain.sh
 
-# Phase 3.B: Fine-tuning (7d)
+# Phase 3.B: Fine-tuning on pathology (7d)
 sbatch slurm_phase3b_finetune.sh [checkpoint]
 
 # Phase 4: Clinical inference (5min per case)
@@ -113,21 +146,52 @@ abdomen-scanner/
 │       ├── TRAININGDATA.csv     # Placeholder only
 ## Dataset
 
-**Primary Dataset:** TR_ABDOMEN_RAD_EMERGENCY (735 cases, 24,498 bboxes)
-**Transfer Learning:** AMOS 2022 (500 CT scans, 15 organs)
+### TR_ABDOMEN_RAD_EMERGENCY Dataset
 
-**Target Classes (6):**
-1. AAA/AAD - 9,783 annotations
-2. Pancreatitis - 6,923 annotations
-3. Cholecystitis - 6,265 annotations
-4. Kidney Stones - 1,405 annotations
-5. Diverticulitis - 54 annotations (rare)
-6. Appendicitis - 54 annotations (rare)
+**CRITICAL:** This dataset has two completely separate subdirectories with different scans:
 
-**Critical Imbalance:** Classes 5-6 have 181:1 ratio vs background  
-**Solution:** AMOS pre-training + aggressive class weights [0.5, 1.0, 1.0, 1.0, 5.0, 100.0, 100.0]
+| Directory | Cases | Annotations | Bboxes | Source CSV |
+|-----------|-------|-------------|--------|------------|
+| **Training-DataSets/** | 735 | 28,134 | 24,498 | TRAININGDATA.csv |
+| **Competition-DataSets/** | 357 | 14,314 | 10,052 | COMPETITIONDATA.csv |
+| **Case Number Overlap** | 356 | - | - | Different scans! |
+| **TOTAL (Unique Scans)** | **1,092** | **42,448** | **34,550** | Both CSVs |
 
-Details: `docs/DATA_FORMAT.md`
+**Key Insight:** 356 case numbers (20001-20356) exist in BOTH directories but contain **completely different patients**:
+- Training-DataSets/20001: Ureteral stone patient (Image IDs: 100007, 100008, 100010)
+- Competition-DataSets/20001: Appendicitis patient (Image IDs: 100014, 100017-100091)
+
+**Data Source:**
+- DICOM files: `data/AbdomenDataSet/Training-DataSets/` and `Competition-DataSets/`
+- Annotations: `data_raw/annotations/TRAININGDATA.csv` and `COMPETITIONDATA.csv`
+- Each CSV maps Case Number + Image ID to bounding box coordinates
+
+**Pipeline Handling:**
+- All phases use `TRAIN_` and `COMP_` prefixes to prevent mixing datasets
+- CSV annotations tagged with `dataset_source` column ('TRAIN' or 'COMP')
+- Matching enforced by BOTH case number AND dataset source
+
+### Target Classes (6 Pathologies)
+
+**Mapped from 11 radiologist labels → 6 competition classes:**
+
+| Class | Pathology | Training | Competition | TOTAL | Notes |
+|-------|-----------|----------|-------------|-------|-------|
+| 1 | AAA/AAD | 7,952 | 1,831 | **9,783** | Well-represented |
+| 2 | Pancreatitis | 5,842 | 1,081 | **6,923** | Well-represented |
+| 3 | Cholecystitis | 5,398 | 867 | **6,265** | Well-represented |
+| 4 | Kidney/Ureteral Stones | 1,251 | 154 | **1,405** | Moderate |
+| 5 | Diverticulitis | 0 | 0 | **0** | ⚠️ RARE (see note) |
+| 6 | Appendicitis | 54 | 2,229 | **2,283** | 95% in Competition! |
+
+**Critical Note on Appendicitis:** OLD pipeline only processed Training (4 cases). NEW pipeline processes both datasets (87 cases total = 4 Training + 83 Competition). This recovers 95% of missing appendicitis cases!
+
+**Class Imbalance Solution:**
+- AMOS 2022 pre-training (500 CT scans, 15 anatomical structures)
+- Aggressive class weights: [0.5, 1.0, 1.0, 1.0, 5.0, 100.0, 100.0]
+- Rare class oversampling during training
+
+**Complete documentation:** `data_raw/annotations/README.md` and `docs/DATA_FORMAT.md`
 
 ---
 

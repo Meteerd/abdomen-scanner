@@ -6,7 +6,7 @@
 #SBATCH --gres=gpu:2              # 2x RTX 6000 GPUs
 #SBATCH --cpus-per-task=32        # 16 workers per GPU
 #SBATCH --mem=128G                # Full node memory
-#SBATCH --time=74:00:00           # 74 hours (+2h buffer)
+#SBATCH --time=90:00:00           # 90 hours (+2h buffer)
 #SBATCH --oversubscribe
 
 echo "=========================================="
@@ -50,7 +50,7 @@ echo "=========================================="
 echo "Verifying AMOS 2022 Dataset"
 echo "=========================================="
 
-AMOS_DIR="data/AbdomenDataSet/AMOS-Dataset"
+AMOS_DIR="data/AbdomenDataSet/AMOS-DataSet"
 META_CSV="data/meta.csv"
 
 # Verify AMOS 2022 dataset exists
@@ -60,7 +60,7 @@ if [ ! -d "$AMOS_DIR" ]; then
     echo "Expected location: $AMOS_DIR"
     echo ""
     echo "Please upload the AMOS dataset using WinSCP or scp to:"
-    echo "  /home/mete/abdomen-scanner/data/AbdomenDataSet/AMOS-Dataset/"
+    echo "  /home/mete/abdomen-scanner/data/AbdomenDataSet/AMOS-DataSet/"
     echo ""
     echo "The directory should contain folders like:"
     echo "  s0000/, s0001/, s0002/, ..."
@@ -80,6 +80,24 @@ fi
 NUM_CASES=$(find "$AMOS_DIR" -mindepth 1 -maxdepth 1 -type d | wc -l)
 echo "AMOS dataset found: $NUM_CASES case folders"
 echo "Meta CSV found: $META_CSV"
+echo ""
+
+# Aggregate organ segmentations into multi-class labels
+echo "=========================================="
+echo "Aggregating AMOS Organ Segmentations"
+echo "=========================================="
+echo "Combining 117 individual organ files into single multi-class labels..."
+echo "This creates label.nii.gz (16 classes) for each case."
+echo ""
+
+python scripts/aggregate_amos_labels.py \
+    --amos_dir "$AMOS_DIR" \
+    --num_workers 16
+
+if [ $? -ne 0 ]; then
+    echo "ERROR: AMOS label aggregation failed!"
+    exit 1
+fi
 echo ""
 
 # Prepare dataset (create split files from meta.csv)
@@ -135,9 +153,7 @@ echo ""
 # Run distributed training
 python scripts/train_monai.py \
     --config "$CONFIG_FILE" \
-    --devices 2 \
-    --accelerator gpu \
-    --strategy ddp
+    --experiment_name phase3a_amos_pretrain
 
 EXIT_CODE=$?
 
